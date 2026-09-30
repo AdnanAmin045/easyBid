@@ -1,12 +1,14 @@
 import asyncio
 from datetime import timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import Text, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
 from app.db import get_session
+from app.pagination import Page, PageParams, contains, paginate
 from app.models import EventLog, ProfileItem, Project, ProjectStatus, Prompt, Proposal, ProposalStatus, utcnow
 from app.security import check_credentials, create_token, require_user
 from app.services import eligibility, pipeline, store
@@ -93,9 +95,18 @@ async def run_now(sv: Services = Depends(services)) -> dict:
     return await pipeline.run_cycle(sv)
 
 
-@router.get("/logs", response_model=list[schemas.LogOut])
-async def logs(limit: int = Query(100, le=500), session: AsyncSession = Depends(get_session)):
-    return list(await session.scalars(select(EventLog).order_by(EventLog.id.desc()).limit(limit)))
+@router.get("/logs", response_model=Page[schemas.LogOut])
+async def logs(
+    level: Literal["info", "error"] | None = None,
+    params: PageParams = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    query = select(EventLog).order_by(EventLog.id.desc())
+    if level:
+        query = query.where(EventLog.level == level)
+    if params.q:
+        query = query.where(contains(params.q, EventLog.message, EventLog.event))
+    return await paginate(session, query, params)
 
 
 # --- settings and account -----------------------------------------------
@@ -141,17 +152,22 @@ async def skills(request: Request, q: str = "", sv: Services = Depends(services)
 # --- projects -----------------------------------------------------------
 
 
-@router.get("/projects", response_model=list[schemas.ProjectOut])
+@router.get("/projects", response_model=Page[schemas.ProjectOut])
 async def list_projects(
     status: str | None = None,
-    limit: int = Query(50, le=200),
-    offset: int = 0,
+    type: Literal["fixed", "hourly"] | None = None,
+    params: PageParams = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
-    query = select(Project).order_by(Project.created_at.desc(), Project.id.desc()).limit(limit).offset(offset)
+    """Newest first. `q` searches the title, description, skill tags and the reason it was taken or left."""
+    query = select(Project).order_by(Project.created_at.desc(), Project.id.desc())
     if status:
         query = query.where(Project.status == status)
-    return list(await session.scalars(query))
+    if type:
+        query = query.where(Project.type == type)
+    if params.q:
+        query = query.where(contains(params.q, Project.title, Project.description, cast(Project.skills, Text), Project.reason))
+    return await paginate(session, query, params)
 
 
 @router.post("/projects/{project_id}/generate", response_model=schemas.ProposalOut)
@@ -173,17 +189,22 @@ async def generate_proposal(
 # --- proposals ----------------------------------------------------------
 
 
-@router.get("/proposals", response_model=list[schemas.ProposalWithProject])
+@router.get("/proposals", response_model=Page[schemas.ProposalWithProject])
 async def list_proposals(
-    status: str | None = None,
-    limit: int = Query(50, le=200),
-    offset: int = 0,
+    status: str | None = Query(None, description="One or more proposal statuses, comma-separated"),
+    bid_status: str | None = None,
+    params: PageParams = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
-    query = select(Proposal).order_by(Proposal.updated_at.desc(), Proposal.id.desc()).limit(limit).offset(offset)
+    """Most recently changed first. `q` searches the project title and the proposal text."""
+    query = select(Proposal).join(Proposal.project).order_by(Proposal.updated_at.desc(), Proposal.id.desc())
     if status:
         query = query.where(Proposal.status.in_(status.split(",")))
-    return list(await session.scalars(query))
+    if bid_status:
+        query = query.where(Proposal.bid_status == bid_status)
+    if params.q:
+        query = query.where(contains(params.q, Project.title, Proposal.text))
+    return await paginate(session, query, params)
 
 
 async def _editable(session: AsyncSession, proposal_id: int) -> Proposal:
@@ -223,12 +244,28 @@ async def reject_proposal(proposal_id: int, session: AsyncSession = Depends(get_
 # --- prompts ------------------------------------------------------------
 
 
-@router.get("/prompts", response_model=list[schemas.PromptOut])
-async def list_prompts(kind: schemas.PromptKind | None = None, session: AsyncSession = Depends(get_session)):
+@router.get("/prompts", response_model=Page[schemas.PromptOut])
+async def list_prompts(
+    kind: schemas.PromptKind | None = None,
+    params: PageParams = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    """Saved versions, newest first. `q` searches the prompt text and its note."""
     query = select(Prompt).order_by(Prompt.kind, Prompt.version.desc())
     if kind:
         query = query.where(Prompt.kind == kind)
-    return list(await session.scalars(query))
+    if params.q:
+        query = query.where(contains(params.q, Prompt.content, Prompt.note))
+    return await paginate(session, query, params)
+
+
+@router.get("/prompts/current", response_model=schemas.PromptOut | None)
+async def current_prompt(kind: schemas.PromptKind, session: AsyncSession = Depends(get_session)):
+    """The active version of a prompt, or the newest one if none is active."""
+    active = await pipeline.active_prompt(session, kind)
+    if active:
+        return active
+    return await session.scalar(select(Prompt).where(Prompt.kind == kind).order_by(Prompt.version.desc()).limit(1))
 
 
 async def _activate(session: AsyncSession, prompt: Prompt) -> None:
@@ -283,9 +320,18 @@ async def test_prompt(
 # --- profile ------------------------------------------------------------
 
 
-@router.get("/profile", response_model=list[schemas.ProfileItemOut])
-async def list_profile(session: AsyncSession = Depends(get_session)):
-    return list(await session.scalars(select(ProfileItem).order_by(ProfileItem.kind, ProfileItem.id)))
+@router.get("/profile", response_model=Page[schemas.ProfileItemOut])
+async def list_profile(
+    kind: Literal["bio", "skill", "project", "link"] | None = None,
+    params: PageParams = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    query = select(ProfileItem).order_by(ProfileItem.kind, ProfileItem.id)
+    if kind:
+        query = query.where(ProfileItem.kind == kind)
+    if params.q:
+        query = query.where(contains(params.q, ProfileItem.title, ProfileItem.content))
+    return await paginate(session, query, params)
 
 
 @router.post("/profile", response_model=schemas.ProfileItemOut)
