@@ -225,7 +225,7 @@ export interface Stats {
   };
   account_problem: string | null;
   waiting: string | null;
-  currency_min_balance_usd: Record<string, number>;
+  scheduler_running: boolean;
   projects_24h: Record<string, number>;
   proposals: Record<string, number>;
   sent_today: number;

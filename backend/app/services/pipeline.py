@@ -20,6 +20,9 @@ logger = logging.getLogger("easybid")
 
 STALE_CLAIM = timedelta(minutes=15)
 BID_SYNC_INTERVAL = timedelta(minutes=10)
+# The scheduler records that it is alive this often; the dashboard warns when the record goes stale.
+HEARTBEAT = timedelta(minutes=1)
+HEARTBEAT_STALE = timedelta(minutes=3)
 # One pipeline run at a time per process; database claims cover other processes.
 _cycle_lock = asyncio.Lock()
 
@@ -135,13 +138,11 @@ async def save_draft(session: AsyncSession, project: Project, draft: Draft, s: A
 
 
 async def _after_refusal(sv: Services, session: AsyncSession, proposal: Proposal, error: FreelancerError) -> None:
-    """Learn from a refused bid. The pipeline carries on; many refusals in a row only hold it off for a while."""
+    """The pipeline carries on after a refused bid; many refusals in a row only hold it off for a while."""
     restrictions = await store.get_config(session, store.RESTRICTIONS)
-    learned = eligibility.learn_from_refusal(restrictions, proposal.project, error.error_code, str(error))
-    if learned:
-        store.log_event(session, "restriction_learned", f"{learned}. Such projects are now skipped.", "info")
-    # A refusal that taught a rule will not repeat, so it does not count.
-    failures = restrictions.get("consecutive_failures", 0) + (0 if learned else 1)
+    # A requirement of that one project says nothing about the account, so it does not count.
+    counts = not eligibility.is_project_requirement(error.error_code)
+    failures = restrictions.get("consecutive_failures", 0) + (1 if counts else 0)
 
     message = f"EasyBid: bid failed on \"{proposal.project.title}\"\n{proposal.error}"
     if failures >= eligibility.BACKOFF_AFTER_FAILURES:
@@ -244,8 +245,7 @@ async def process_project(sv: Services, project_id: int) -> str:
         if result.passed:
             # Rules passed (skills first); now: is this account allowed to bid on it?
             account = await get_account(sv, session)
-            restrictions = await store.get_config(session, store.RESTRICTIONS)
-            reason = eligibility.check_eligibility(project, account, restrictions)
+            reason = eligibility.check_eligibility(project, account)
         if reason:
             project.status, project.reason = ProjectStatus.FILTERED, reason
             await session.commit()
@@ -416,6 +416,11 @@ def _due(runtime: dict, key: str, interval: timedelta, now: datetime) -> bool:
     return last is None or now - datetime.fromisoformat(last) >= interval
 
 
+def scheduler_running(runtime: dict) -> bool:
+    """Whether the scheduler has ticked recently. False means nothing is being checked automatically."""
+    return not _due(runtime, "last_tick", HEARTBEAT_STALE, utcnow())
+
+
 async def tick(sv: Services) -> None:
     """Called every few seconds by the scheduler; runs whatever is due."""
     now = utcnow()
@@ -424,11 +429,14 @@ async def tick(sv: Services) -> None:
         runtime = await store.get_config(session, store.RUNTIME)
         run_now = not s.paused and _due(runtime, "last_cycle", timedelta(seconds=s.poll_interval_seconds), now)
         sync_now = _due(runtime, "last_sync", BID_SYNC_INTERVAL, now)
+        beat = _due(runtime, "last_tick", HEARTBEAT, now)
         if run_now:
             runtime["last_cycle"] = now.isoformat()
         if sync_now:
             runtime["last_sync"] = now.isoformat()
-        if run_now or sync_now:
+        if beat:
+            runtime["last_tick"] = now.isoformat()
+        if run_now or sync_now or beat:
             await store.set_config(session, store.RUNTIME, runtime)
             await session.commit()
 

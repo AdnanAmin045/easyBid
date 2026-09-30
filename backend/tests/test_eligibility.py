@@ -69,34 +69,22 @@ async def test_preferred_only_and_kyc_projects_are_skipped_unless_the_account_qu
     assert {k: v for k, v in (await statuses(sv)).items() if k > 2} == {3: "proposed", 4: "proposed"}
 
 
-async def test_balance_requirement_is_learned_from_a_refusal_then_applied_before_ai(sv, fake_freelancer):
+async def test_a_balance_refusal_is_about_that_project_only(sv, fake_freelancer):
     await add_prompts(sv)
     await configure(sv, mode="auto")
     fake_freelancer.bid_error = BALANCE_ERROR
-    fake_freelancer.projects = [inr_project(1)]
+    fake_freelancer.projects = [inr_project(i) for i in range(1, 8)]
     await run_cycle(sv)
-    (failed,) = await proposals(sv)
-    assert failed.status == "failed"
+    # Every project is tried: this kind of refusal neither blocks the currency nor triggers holding off.
+    assert [p.status for p in await proposals(sv)] == ["failed"] * 7
     async with sv.sessions() as session:
-        restrictions = await store.get_config(session, store.RESTRICTIONS)
-        assert restrictions["currency_min_balance_usd"] == {"INR": 19.0}
-        # A refusal that taught a rule does not count towards holding off.
-        assert restrictions["consecutive_failures"] == 0
+        assert (await store.get_config(session, store.RESTRICTIONS))["consecutive_failures"] == 0
 
-    # The next INR project is dropped without writing a proposal; USD is unaffected.
+    # The next project in the same currency is bid on as usual.
     fake_freelancer.bid_error = None
-    calls = sv.llm.proposal_calls
-    fake_freelancer.projects = [inr_project(2), raw_project(3)]
-    await run_cycle(sv)
-    assert "INR projects need $19" in (await reasons(sv))[2]
-    assert (await statuses(sv))[3] == "proposed"
-    assert sv.llm.proposal_calls == calls + 1
-
-    # Once the balance covers it, INR projects are taken again.
-    fake_freelancer.account["account_balances"]["equivalent_amount"] = 25
-    fake_freelancer.projects = [inr_project(4)]
-    await run_cycle(sv)
-    assert (await statuses(sv))[4] == "proposed"
+    fake_freelancer.projects = [inr_project(8)]
+    assert await run_cycle(sv) == {"fetched": 1, "proposed": 1}
+    assert [b["project_id"] for b in fake_freelancer.bids] == [8]
 
 
 REFUSED = (403, {"status": "error", "error_code": "SomethingElse", "message": "Not allowed"})

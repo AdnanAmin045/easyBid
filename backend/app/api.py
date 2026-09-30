@@ -53,7 +53,6 @@ async def stats(session: AsyncSession = Depends(get_session), sv: Services = Dep
         account = await pipeline.get_account(sv, session, max_age=timedelta(minutes=5))
     except FreelancerError:
         account = await store.get_config(session, store.ACCOUNT)
-    restrictions = await store.get_config(session, store.RESTRICTIONS)
     day_ago = utcnow() - timedelta(hours=24)
 
     project_rows = await session.execute(
@@ -85,7 +84,7 @@ async def stats(session: AsyncSession = Depends(get_session), sv: Services = Dep
         "account": {k: v for k, v in account.items() if k != "skills"},
         "account_problem": eligibility.account_problem(account) if account else None,
         "waiting": await pipeline.bidding_wait(session, s),
-        "currency_min_balance_usd": restrictions.get("currency_min_balance_usd") or {},
+        "scheduler_running": pipeline.scheduler_running(runtime),
         "projects_24h": dict(project_rows.all()),
         "proposals": proposals,
         "sent_today": await pipeline.bids_sent_today(session),

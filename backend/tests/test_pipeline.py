@@ -148,6 +148,19 @@ async def test_failed_bid_is_recorded_and_can_be_retried(sv, fake_freelancer):
     assert (await proposals(sv))[0].status == "sent"
 
 
+async def test_scheduler_heartbeat(sv):
+    from app.services.pipeline import scheduler_running, tick
+
+    async def runtime():
+        async with sv.sessions() as session:
+            return await store.get_config(session, store.RUNTIME)
+
+    assert not scheduler_running(await runtime())
+    await configure(sv, paused=True)
+    await tick(sv)  # ticks while paused too, so the dashboard can tell the scheduler is alive
+    assert scheduler_running(await runtime())
+
+
 async def test_sync_bids_updates_award_status(sv, fake_freelancer):
     await add_prompts(sv)
     await configure(sv, mode="auto")

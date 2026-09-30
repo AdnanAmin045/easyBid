@@ -134,6 +134,12 @@ export default function DashboardPage() {
         <Stat label="Awarded" value={stats.awarded} href="/bids" />
       </div>
 
+      {!stats.scheduler_running && (
+        <Notice>
+          Automatic checking is not running on the server, so new projects are only checked when you press Run now. If this message stays
+          for more than a minute, the backend is asleep or was started with EMBEDDED_SCHEDULER=false and no worker.
+        </Notice>
+      )}
       {stats.account_problem && <Notice>Bidding is blocked: {stats.account_problem}.</Notice>}
       {stats.waiting && !stats.paused && <Notice>No new projects are taken right now: {stats.waiting}. EasyBid carries on by itself.</Notice>}
 
@@ -161,11 +167,6 @@ export default function DashboardPage() {
               </div>
               <p className="mt-4 text-sm text-zinc-500">
                 Projects this account cannot bid on are dropped before any AI is used.
-                {Object.entries(stats.currency_min_balance_usd).map(([currency, amount]) => (
-                  <span key={currency} className="block text-zinc-700">
-                    Learned from Freelancer: {currency} projects need ${amount} in your balance.
-                  </span>
-                ))}
               </p>
             </>
           ) : (

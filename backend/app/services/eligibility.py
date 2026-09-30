@@ -1,18 +1,17 @@
 """Can this account bid on this project at all? Checked before any AI call.
 
-Some requirements are visible up front (Preferred Freelancer only, identity verification, bids left).
-Others Freelancer only reveals when a bid is refused, such as a minimum account balance for a currency.
-Those are learned from the refusal and applied to every later project.
+Only requirements that are visible up front are checked here (Preferred Freelancer only, identity
+verification, bids left). Others Freelancer reveals only by refusing the bid, such as a minimum account
+balance. Those cannot be predicted from the project (bids in the same currency have gone both ways), so
+such a project is attempted and the pipeline moves on if the bid is refused.
 """
 
-import re
 from datetime import timedelta
 
 from app.models import Project, utcnow
 
-# "To bid on this project, you must have at least $19 USD or equivalent in your account balance."
-MIN_BALANCE = re.compile(r"at least \$?([\d,]+(?:\.\d+)?)\s*USD", re.I)
-MIN_BALANCE_CODE = "BID_MINIMUM_REQUIREMENT_NOT_MET"
+# Refusals about one project's own requirements (such as a minimum account balance), not about the account.
+PROJECT_REQUIREMENT_CODES = ("BID_MINIMUM_REQUIREMENT_NOT_MET",)
 
 # After this many refused bids in a row, hold off for a while and then carry on by itself.
 # A single refusal never stops anything: the pipeline just moves to the next project.
@@ -50,29 +49,15 @@ def account_problem(account: dict) -> str | None:
     return None
 
 
-def check_eligibility(project: Project, account: dict, restrictions: dict) -> str | None:
+def check_eligibility(project: Project, account: dict) -> str | None:
     """Why this account cannot bid on this project, or None if it can."""
     upgrades = project.upgrades or []
     if "pf_only" in upgrades and not account.get("preferred_freelancer"):
         return "Preferred Freelancers only"
     if "kyc_required" in upgrades and not account.get("identity_verified"):
         return "identity verification required"
-
-    required = (restrictions.get("currency_min_balance_usd") or {}).get(project.currency)
-    balance = account.get("balance_usd")
-    if required and balance is not None and balance < required:
-        return f"{project.currency} projects need ${required:g} in your Freelancer balance (you have ${balance:.2f})"
     return None
 
 
-def learn_from_refusal(restrictions: dict, project: Project, error_code: str | None, message: str) -> str | None:
-    """Record a requirement Freelancer revealed by refusing a bid. Returns a description if something was learned."""
-    if error_code and MIN_BALANCE_CODE in error_code:
-        found = MIN_BALANCE.search(message)
-        if found:
-            required = float(found.group(1).replace(",", ""))
-            by_currency = dict(restrictions.get("currency_min_balance_usd") or {})
-            by_currency[project.currency] = required
-            restrictions["currency_min_balance_usd"] = by_currency
-            return f"{project.currency} projects need ${required:g} in your Freelancer balance"
-    return None
+def is_project_requirement(error_code: str | None) -> bool:
+    return any(code in (error_code or "") for code in PROJECT_REQUIREMENT_CODES)
