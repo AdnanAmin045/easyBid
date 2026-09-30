@@ -64,7 +64,8 @@ export function useApi<T>(path: string | null) {
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
   const current = state.path === path ? state : {};
-  return { data: current.data, error: current.error, loading: !current.data && !current.error, reload };
+  // `data` can legitimately be null (an endpoint with nothing to return), so loading is tracked by path.
+  return { data: current.data, error: current.error, loading: state.path !== path, reload };
 }
 
 export type Mode = "manual" | "semi" | "auto";
@@ -235,4 +236,50 @@ export function timeAgo(iso: string | null): string {
   if (minutes < 60) return `${minutes} min ago`;
   if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
   return `${Math.round(minutes / 1440)} d ago`;
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+/** Build "/path?a=1&b=2", leaving out empty values. */
+export function withQuery(path: string, params: Record<string, string | number | null | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== null && value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
+}
+
+/**
+ * One page of a list endpoint, with its search text and filters.
+ * Changing the search or a filter goes back to page 1.
+ */
+export function usePaged<T>(path: string, options: { pageSize?: number; filters?: Record<string, string> } = {}) {
+  const { pageSize = 20, filters = {} } = options;
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState("");
+  const scope = JSON.stringify(filters);
+  const [seenScope, setSeenScope] = useState(scope);
+  if (seenScope !== scope) {
+    setSeenScope(scope);
+    setPage(1);
+  }
+
+  const search = useCallback((text: string) => {
+    setQ(text);
+    setPage(1);
+  }, []);
+
+  const result = useApi<Page<T>>(withQuery(path, { ...filters, q, page, page_size: pageSize }));
+  // A page can empty out after an action (approve, delete); step back instead of showing nothing.
+  const lastPage = result.data?.pages;
+  if (lastPage !== undefined && page > lastPage) setPage(lastPage);
+
+  return { ...result, page, setPage, q, search };
 }
