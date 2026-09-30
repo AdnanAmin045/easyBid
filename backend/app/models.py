@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -35,6 +35,16 @@ class ProposalStatus:
 
 class Project(Base):
     __tablename__ = "projects"
+    # Trigram indexes keep "contains" search fast as the table grows.
+    __table_args__ = (
+        Index("ix_projects_title_trgm", "title", postgresql_using="gin", postgresql_ops={"title": "gin_trgm_ops"}),
+        Index(
+            "ix_projects_description_trgm",
+            "description",
+            postgresql_using="gin",
+            postgresql_ops={"description": "gin_trgm_ops"},
+        ),
+    )
 
     # Freelancer project id
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
