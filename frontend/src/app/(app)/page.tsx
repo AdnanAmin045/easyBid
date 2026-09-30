@@ -136,8 +136,8 @@ export default function DashboardPage() {
 
       {!stats.scheduler_running && (
         <Notice>
-          Automatic checking is not running on the server, so new projects are only checked when you press Run now. If this message stays
-          for more than a minute, the backend is asleep or was started with EMBEDDED_SCHEDULER=false and no worker.
+          Automatic checking has not reported in for three minutes, so new projects are only checked when you press Run now. It normally
+          starts by itself within a few minutes of the backend waking up; on a free Render plan the backend sleeps when nobody uses it.
         </Notice>
       )}
       {stats.account_problem && <Notice>Bidding is blocked: {stats.account_problem}.</Notice>}

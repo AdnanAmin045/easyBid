@@ -421,12 +421,17 @@ def scheduler_running(runtime: dict) -> bool:
     return not _due(runtime, "last_tick", HEARTBEAT_STALE, utcnow())
 
 
-async def tick(sv: Services) -> None:
-    """Called every few seconds by the scheduler; runs whatever is due."""
+async def tick(sv: Services, owner: str = "scheduler", standby: bool = False) -> None:
+    """Called every few seconds by a scheduler; runs whatever is due.
+
+    A standby scheduler does nothing while another one is alive, and takes over when that one goes quiet.
+    """
     now = utcnow()
     async with sv.sessions() as session:
         s = await store.get_settings(session)
         runtime = await store.get_config(session, store.RUNTIME)
+        if standby and runtime.get("tick_owner") != owner and scheduler_running(runtime):
+            return
         run_now = not s.paused and _due(runtime, "last_cycle", timedelta(seconds=s.poll_interval_seconds), now)
         sync_now = _due(runtime, "last_sync", BID_SYNC_INTERVAL, now)
         beat = _due(runtime, "last_tick", HEARTBEAT, now)
@@ -435,7 +440,7 @@ async def tick(sv: Services) -> None:
         if sync_now:
             runtime["last_sync"] = now.isoformat()
         if beat:
-            runtime["last_tick"] = now.isoformat()
+            runtime["last_tick"], runtime["tick_owner"] = now.isoformat(), owner
         if run_now or sync_now or beat:
             await store.set_config(session, store.RUNTIME, runtime)
             await session.commit()

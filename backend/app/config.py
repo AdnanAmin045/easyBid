@@ -11,7 +11,8 @@ class Env(BaseSettings):
     # Supabase Postgres connection string (session pooler)
     database_url: str = ""
     redis_url: str = ""
-    # The polling loop runs inside the web process. Set to false only when the arq worker runs it instead.
+    # The polling loop runs inside the web process. With false, the arq worker runs it and the web process
+    # only takes over if the worker stops reporting in.
     embedded_scheduler: bool = True
 
     freelancer_token: str = ""

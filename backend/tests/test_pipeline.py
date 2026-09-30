@@ -157,7 +157,21 @@ async def test_scheduler_heartbeat(sv):
 
     assert not scheduler_running(await runtime())
     await configure(sv, paused=True)
-    await tick(sv)  # ticks while paused too, so the dashboard can tell the scheduler is alive
+    await tick(sv, owner="worker")  # ticks while paused too, so the dashboard can tell the scheduler is alive
+    assert scheduler_running(await runtime())
+
+    # A standby scheduler leaves a live one alone...
+    await tick(sv, owner="web", standby=True)
+    assert (await runtime())["tick_owner"] == "worker"
+
+    # ...takes over once it has gone quiet, and then keeps going.
+    async with sv.sessions() as session:
+        stale = {**await store.get_config(session, store.RUNTIME), "last_tick": "2020-01-01T00:00:00+00:00"}
+        await store.set_config(session, store.RUNTIME, stale)
+        await session.commit()
+    await tick(sv, owner="web", standby=True)
+    assert (await runtime())["tick_owner"] == "web" and scheduler_running(await runtime())
+    await tick(sv, owner="web", standby=True)
     assert scheduler_running(await runtime())
 
 

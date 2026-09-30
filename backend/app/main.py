@@ -29,10 +29,10 @@ def build_services() -> Services:
     )
 
 
-async def scheduler_loop(sv: Services) -> None:
+async def scheduler_loop(sv: Services, standby: bool) -> None:
     while True:
         try:
-            await tick(sv)
+            await tick(sv, owner="web", standby=standby)
         except Exception:
             logger.exception("Scheduler tick failed")
         await asyncio.sleep(TICK_SECONDS)
@@ -47,10 +47,10 @@ async def lifespan(app: FastAPI):
 
     app.state.services = build_services()
     app.state.skill_cache = []
-    task = asyncio.create_task(scheduler_loop(app.state.services)) if env.embedded_scheduler else None
+    # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
+    task = asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))
     yield
-    if task:
-        task.cancel()
+    task.cancel()
     await app.state.services.freelancer.close()
 
 

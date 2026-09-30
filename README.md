@@ -80,7 +80,7 @@ If you ran EasyBid on the old local SQLite file, copy that data across once: `py
 
 `REDIS_URL` on the worker is your Upstash URL: Upstash console > your database > Connect > TCP, the one that starts with `rediss://`. Upstash bills per command; the worker polls every 5 seconds to keep that low.
 
-To run a single service instead of two, create only the web service and leave `EMBEDDED_SCHEDULER` unset (it defaults to true): the polling loop runs inside the web process and Redis is not used at all. The blueprint sets it to false on the API because its worker does the polling. The dashboard shows a warning whenever no scheduler has reported in for three minutes. The polling loop then runs inside the web process. A free web service sleeps when idle, which stops polling, so use a paid instance either way.
+To run a single service instead of two, create only the web service and leave `EMBEDDED_SCHEDULER` unset (it defaults to true): the polling loop runs inside the web process and Redis is not used at all. The blueprint sets it to false on the API because its worker does the polling; if the worker stops reporting in for three minutes, the web process takes over. The dashboard shows a warning whenever no scheduler has reported in for three minutes. The polling loop then runs inside the web process. A free web service sleeps when idle, which stops polling, so use a paid instance either way.
 
 ### 3. Vercel (frontend)
 

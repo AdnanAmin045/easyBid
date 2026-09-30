@@ -32,7 +32,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 async def run_tick(ctx: dict) -> None:
-    await tick(ctx["services"])
+    await tick(ctx["services"], owner="worker")
 
 
 class WorkerSettings:
