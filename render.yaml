@@ -1,0 +1,54 @@
+# Render Blueprint: API + polling worker. Redis is Upstash, the database is Supabase, the dashboard is on Vercel.
+services:
+  - type: web
+    name: easybid-api
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: FREELANCER_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: EMBEDDED_SCHEDULER
+        value: "false"
+
+  - type: worker
+    name: easybid-worker
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    dockerCommand: arq app.worker.WorkerSettings
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: FREELANCER_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # Upstash Redis URL (rediss://default:<password>@<name>.upstash.io:6379)
+      - key: REDIS_URL
+        sync: false

@@ -1,0 +1,238 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+const BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+const TOKEN_KEY = "easybid_token";
+
+export const getToken = () => (typeof window === "undefined" ? null : localStorage.getItem(TOKEN_KEY));
+export const setToken = (token: string) => localStorage.setItem(TOKEN_KEY, token);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+function errorMessage(body: unknown, status: number): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => `${(d.loc ?? []).slice(1).join(".")}: ${d.msg}`).join("; ");
+  }
+  return `Request failed (${status})`;
+}
+
+export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method: init.method ?? "GET",
+      headers: {
+        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    throw new Error(`Cannot reach the API at ${BASE}`);
+  }
+  if (res.status === 401 && path !== "/auth/login") {
+    clearToken();
+    // A full reload, so no page keeps state from the expired session.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
+  if (res.status === 204) return undefined as T;
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessage(body, res.status));
+  return body as T;
+}
+
+/** Load a GET endpoint; `reload()` fetches it again. Pass null to skip. */
+export function useApi<T>(path: string | null) {
+  const [state, setState] = useState<{ path?: string; data?: T; error?: string }>({});
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (!path) return;
+    let alive = true;
+    api<T>(path)
+      .then((data) => alive && setState({ path, data }))
+      .catch((e: Error) => alive && setState((s) => ({ ...s, path, error: e.message })));
+    return () => {
+      alive = false;
+    };
+  }, [path, version]);
+
+  const reload = useCallback(() => setVersion((v) => v + 1), []);
+  const current = state.path === path ? state : {};
+  return { data: current.data, error: current.error, loading: !current.data && !current.error, reload };
+}
+
+export type Mode = "manual" | "semi" | "auto";
+export type PromptKind = "selection" | "proposal";
+
+export interface Settings {
+  paused: boolean;
+  mode: Mode;
+  poll_interval_seconds: number;
+  max_projects_per_cycle: number;
+  daily_bid_cap: number;
+  semi_auto_min_score: number;
+  skill_ids: number[];
+  skill_names: string[];
+  min_skill_matches: number;
+  blocked_skill_ids: number[];
+  blocked_skill_names: string[];
+  project_types: ("fixed" | "hourly")[];
+  currencies: string[];
+  languages: string[];
+  min_fixed_budget: number;
+  min_hourly_rate: number;
+  max_bid_count: number;
+  max_age_minutes: number;
+  min_score: number;
+  exclude_keywords: string[];
+  skip_upgrades: string[];
+  fixed_budget_position: number;
+  hourly_rate: number;
+  default_period_days: number;
+  hourly_weekly_hours: number;
+  milestone_percentage: number;
+  selection_model: string;
+  proposal_model: string;
+  proposal_min_chars: number;
+  proposal_max_chars: number;
+}
+
+export interface Proposal {
+  id: number;
+  project_id: number;
+  prompt_id: number | null;
+  text: string;
+  amount: number;
+  period: number;
+  model: string;
+  status: string;
+  auto: boolean;
+  error: string | null;
+  freelancer_bid_id: number | null;
+  bid_status: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
+export interface Project {
+  id: number;
+  title: string;
+  description: string;
+  url: string;
+  type: "fixed" | "hourly";
+  currency: string;
+  budget_min: number | null;
+  budget_max: number | null;
+  weekly_hours: number | null;
+  bid_count: number;
+  bid_avg: number | null;
+  skills: string[];
+  skill_ids: number[];
+  language: string | null;
+  upgrades: string[];
+  submitted_at: string | null;
+  status: string;
+  score: number | null;
+  reason: string | null;
+  created_at: string;
+  proposal?: Proposal | null;
+}
+
+export interface ProposalWithProject extends Proposal {
+  project: Project;
+}
+
+export interface Prompt {
+  id: number;
+  kind: PromptKind;
+  version: number;
+  content: string;
+  note: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PromptTest {
+  apply: boolean | null;
+  reason: string | null;
+  text: string | null;
+  chars: number | null;
+  amount: number | null;
+  period: number | null;
+}
+
+export interface ProfileItem {
+  id: number;
+  kind: "bio" | "skill" | "project" | "link";
+  title: string;
+  content: string;
+  is_active: boolean;
+}
+
+export interface Skill {
+  id: number;
+  name: string;
+}
+
+export interface Account {
+  id: number;
+  username: string;
+  display_name: string | null;
+  skills: Skill[];
+}
+
+export interface Stats {
+  paused: boolean;
+  mode: Mode;
+  skills_selected: number;
+  ai_problem: string | null;
+  proposal_prompt_active: boolean;
+  last_cycle: string | null;
+  account: {
+    username?: string;
+    membership?: string | null;
+    bids_remaining?: number | null;
+    balance_usd?: number | null;
+    preferred_freelancer?: boolean;
+    freelancer_verified?: boolean;
+    identity_verified?: boolean;
+    payment_verified?: boolean;
+  };
+  account_problem: string | null;
+  currency_min_balance_usd: Record<string, number>;
+  projects_24h: Record<string, number>;
+  proposals: Record<string, number>;
+  sent_today: number;
+  daily_bid_cap: number;
+  awarded: number;
+  prompts: { version: number; is_active: boolean; sent: number; awarded: number }[];
+}
+
+export interface LogEntry {
+  id: number;
+  level: string;
+  event: string;
+  message: string;
+  project_id: number | null;
+  created_at: string;
+}
+
+export function budgetLabel(p: Project): string {
+  const range = p.budget_min && p.budget_max ? `${p.budget_min}–${p.budget_max}` : `${p.budget_max ?? p.budget_min ?? "?"}`;
+  return `${range} ${p.currency}${p.type === "hourly" ? "/hr" : ""}`;
+}
+
+export function timeAgo(iso: string | null): string {
+  if (!iso) return "never";
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
+  return `${Math.round(minutes / 1440)} d ago`;
+}
