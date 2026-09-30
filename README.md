@@ -98,7 +98,7 @@ In this order, and everything before the AI steps costs nothing:
 4. **Selection prompt** (AI), then **proposal prompt** (AI).
 5. **Clean-up**: quotation marks, markdown, bullets, tags and preambles are stripped; a proposal with placeholders, contact details or the wrong length is rewritten once and otherwise rejected. The same check runs again on hand-edited text before sending.
 
-Three refused bids in a row pause EasyBid.
+A refused bid never stops EasyBid: the proposal is marked failed and the run moves on to the next project. Five refusals in a row hold bidding off for 15 minutes, after which it carries on by itself. Once the daily bid cap is reached, nothing is fetched or written until the cap resets at 00:00 UTC.
 
 ## Notes
 

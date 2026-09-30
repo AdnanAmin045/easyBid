@@ -206,6 +206,7 @@ export interface Stats {
     payment_verified?: boolean;
   };
   account_problem: string | null;
+  waiting: string | null;
   currency_min_balance_usd: Record<string, number>;
   projects_24h: Record<string, number>;
   proposals: Record<string, number>;

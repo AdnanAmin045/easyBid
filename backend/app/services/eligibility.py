@@ -6,6 +6,7 @@ Those are learned from the refusal and applied to every later project.
 """
 
 import re
+from datetime import timedelta
 
 from app.models import Project, utcnow
 
@@ -13,8 +14,10 @@ from app.models import Project, utcnow
 MIN_BALANCE = re.compile(r"at least \$?([\d,]+(?:\.\d+)?)\s*USD", re.I)
 MIN_BALANCE_CODE = "BID_MINIMUM_REQUIREMENT_NOT_MET"
 
-# Stop everything after this many refused bids in a row: something is wrong with the account.
-MAX_CONSECUTIVE_FAILURES = 3
+# After this many refused bids in a row, hold off for a while and then carry on by itself.
+# A single refusal never stops anything: the pipeline just moves to the next project.
+BACKOFF_AFTER_FAILURES = 5
+BACKOFF = timedelta(minutes=15)
 
 
 def account_snapshot(me: dict) -> dict:

@@ -71,7 +71,11 @@ async def test_auto_mode_bids_and_respects_daily_cap(sv, fake_freelancer):
     fake_freelancer.projects = [raw_project(i) for i in (1, 2, 3)]
     await run_cycle(sv)
     assert len(fake_freelancer.bids) == 2
-    assert sorted(p.status for p in await proposals(sv)) == ["pending", "sent", "sent"]
+    # The third project is left alone: no proposal is written once the cap is reached.
+    assert [p.status for p in await proposals(sv)] == ["sent", "sent"]
+    assert sorted((await statuses(sv)).values()) == ["new", "proposed", "proposed"]
+    assert await run_cycle(sv) == {"skipped": "daily bid cap reached (2)"}
+    assert sv.llm.proposal_calls == 2
 
 
 async def test_semi_mode_only_auto_sends_high_scores(sv, fake_freelancer):

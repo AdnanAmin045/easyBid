@@ -48,7 +48,11 @@ async def login(body: schemas.LoginIn):
 async def stats(session: AsyncSession = Depends(get_session), sv: Services = Depends(services)) -> dict:
     s = await store.get_settings(session)
     runtime = await store.get_config(session, store.RUNTIME)
-    account = await store.get_config(session, store.ACCOUNT)
+    try:
+        # Kept fresh here too, so the dashboard is right even while EasyBid is paused.
+        account = await pipeline.get_account(sv, session, max_age=timedelta(minutes=5))
+    except FreelancerError:
+        account = await store.get_config(session, store.ACCOUNT)
     restrictions = await store.get_config(session, store.RESTRICTIONS)
     day_ago = utcnow() - timedelta(hours=24)
 
@@ -80,6 +84,7 @@ async def stats(session: AsyncSession = Depends(get_session), sv: Services = Dep
         "last_cycle": runtime.get("last_cycle"),
         "account": {k: v for k, v in account.items() if k != "skills"},
         "account_problem": eligibility.account_problem(account) if account else None,
+        "waiting": await pipeline.bidding_wait(session, s),
         "currency_min_balance_usd": restrictions.get("currency_min_balance_usd") or {},
         "projects_24h": dict(project_rows.all()),
         "proposals": proposals,

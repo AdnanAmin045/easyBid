@@ -44,10 +44,20 @@ class Draft:
     prompt_id: int | None
 
 
-async def get_account(sv: Services, session: AsyncSession, refresh: bool = False) -> dict:
-    """The Freelancer account behind the token, cached in the database."""
+async def get_account(
+    sv: Services, session: AsyncSession, refresh: bool = False, max_age: timedelta | None = None
+) -> dict:
+    """The Freelancer account behind the token, cached in the database.
+
+    Fetched again when `refresh` is set, when the cached copy is older than `max_age`,
+    or when it predates the bids/balance fields (no `refreshed_at`).
+    """
     account = await store.get_config(session, store.ACCOUNT)
-    if account and not refresh:
+    refreshed_at = account.get("refreshed_at")
+    stale = refreshed_at is None or (
+        max_age is not None and utcnow() - datetime.fromisoformat(refreshed_at) > max_age
+    )
+    if account and not refresh and not stale:
         return account
     account = eligibility.account_snapshot(await sv.freelancer.get_self())
     await store.set_config(session, store.ACCOUNT, account)
@@ -70,6 +80,16 @@ async def bids_sent_today(session: AsyncSession) -> int:
         select(func.count()).where(Proposal.status == ProposalStatus.SENT, Proposal.sent_at >= midnight)
     )
     return count or 0
+
+
+async def bidding_wait(session: AsyncSession, s: AppSettings) -> str | None:
+    """Why no bid can go out right now, so nothing should be fetched or written. None if bids can go out."""
+    if await bids_sent_today(session) >= s.daily_bid_cap:
+        return f"daily bid cap reached ({s.daily_bid_cap})"
+    until = (await store.get_config(session, store.RESTRICTIONS)).get("backoff_until")
+    if until and utcnow() < datetime.fromisoformat(until):
+        return f"holding off until {until[11:16]} UTC after repeated refused bids"
+    return None
 
 
 async def fetch_new_projects(sv: Services, session: AsyncSession, s: AppSettings) -> int:
@@ -114,25 +134,25 @@ async def save_draft(session: AsyncSession, project: Project, draft: Draft, s: A
     return proposal
 
 
-async def _after_refusal(
-    sv: Services, session: AsyncSession, proposal: Proposal, error: FreelancerError, s: AppSettings
-) -> None:
-    """Learn from a refused bid, and pause everything when refusals keep coming."""
+async def _after_refusal(sv: Services, session: AsyncSession, proposal: Proposal, error: FreelancerError) -> None:
+    """Learn from a refused bid. The pipeline carries on; many refusals in a row only hold it off for a while."""
     restrictions = await store.get_config(session, store.RESTRICTIONS)
     learned = eligibility.learn_from_refusal(restrictions, proposal.project, error.error_code, str(error))
     if learned:
         store.log_event(session, "restriction_learned", f"{learned}. Such projects are now skipped.", "info")
-    # A refusal that taught a rule will not repeat, so it does not count towards the pause.
+    # A refusal that taught a rule will not repeat, so it does not count.
     failures = restrictions.get("consecutive_failures", 0) + (0 if learned else 1)
-    restrictions["consecutive_failures"] = failures
-    await store.set_config(session, store.RESTRICTIONS, restrictions)
 
     message = f"EasyBid: bid failed on \"{proposal.project.title}\"\n{proposal.error}"
-    if failures >= eligibility.MAX_CONSECUTIVE_FAILURES and not s.paused:
-        s.paused = True
-        await store.save_settings(session, s)
-        store.log_event(session, "auto_paused", f"Paused after {failures} refused bids in a row", "error")
-        message += f"\n\nEasyBid paused itself after {failures} refused bids in a row."
+    if failures >= eligibility.BACKOFF_AFTER_FAILURES:
+        until = utcnow() + eligibility.BACKOFF
+        restrictions["backoff_until"] = until.isoformat()
+        note = f"{failures} refused bids in a row. Bidding resumes by itself at {until:%H:%M} UTC."
+        store.log_event(session, "holding_off", note, "error")
+        message += f"\n\n{note}"
+        failures = 0
+    restrictions["consecutive_failures"] = failures
+    await store.set_config(session, store.RESTRICTIONS, restrictions)
     await session.commit()
     await sv.notifier.send(message)
 
@@ -182,7 +202,7 @@ async def send_proposal(sv: Services, proposal_id: int, auto: bool = False) -> P
             proposal.status = ProposalStatus.FAILED
             proposal.error = str(e) if e.status_code else f"Outcome unknown, check Freelancer before retrying: {e}"
             store.log_event(session, "bid_failed", f"{title}: {proposal.error}", "error", proposal.project_id)
-            await _after_refusal(sv, session, proposal, e, s)
+            await _after_refusal(sv, session, proposal, e)
             raise SendError(proposal.error) from e
 
         proposal.status = ProposalStatus.SENT
@@ -255,7 +275,7 @@ async def process_project(sv: Services, project_id: int) -> str:
         try:
             await send_proposal(sv, proposal_id, auto=True)
         except SendError as e:
-            # Stays in the queue as pending or failed, so it can still be sent by hand.
+            # The run moves on to the next project; this one stays in the queue as pending or failed.
             logger.info("Auto-send skipped for %s: %s", project_id, e)
     else:
         await sv.notifier.send(f"EasyBid: proposal waiting for approval (score {score})\n{title}\n{url}")
@@ -294,6 +314,9 @@ async def run_cycle(sv: Services) -> dict:
                 return {"skipped": ai_problem}
             if await active_prompt(session, "proposal") is None:
                 return {"skipped": "no active proposal prompt"}
+            wait = await bidding_wait(session, s)
+            if wait:
+                return {"skipped": wait}
 
             # Fresh bids-left, balance and verification status before spending anything on AI.
             try:
@@ -325,6 +348,10 @@ async def run_cycle(sv: Services) -> dict:
 
         summary: dict = {"fetched": fetched}
         for project_id in ids:
+            # Once no bid can go out, the rest stay untouched: no proposal is written for nothing.
+            async with sv.sessions() as session:
+                if await bidding_wait(session, s):
+                    break
             try:
                 status = await process_project(sv, project_id)
             except Exception as e:  # one bad project must not stop the run

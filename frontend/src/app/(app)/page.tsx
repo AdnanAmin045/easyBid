@@ -122,6 +122,7 @@ export default function DashboardPage() {
       </div>
 
       {stats.account_problem && <Notice>Bidding is blocked: {stats.account_problem}.</Notice>}
+      {stats.waiting && !stats.paused && <Notice>No new projects are taken right now: {stats.waiting}. EasyBid carries on by itself.</Notice>}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title={`Freelancer account${stats.account.username ? `: ${stats.account.username}` : ""}`} className="lg:col-span-2">
