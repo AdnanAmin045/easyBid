@@ -2,10 +2,18 @@
 
 import { useState } from "react";
 import { Badge, Button, Empty, Field, Input, Notice, PageHeader, Textarea } from "@/components/ui";
-import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { ListBody, Pagination, SearchInput, emptyMessage } from "@/components/list";
 import { api, budgetLabel, timeAgo, useApi, usePaged, type ProposalWithProject, type Settings } from "@/lib/api";
 
-function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; maxChars: number; onChange: () => void }) {
+interface QueueItemProps {
+  item: ProposalWithProject;
+  maxChars: number;
+  /** The list is being fetched again; actions wait for the fresh state. */
+  refreshing: boolean;
+  onChange: () => void;
+}
+
+function QueueItem({ item, maxChars, refreshing, onChange }: QueueItemProps) {
   const { project } = item;
   const [text, setText] = useState(item.text);
   const [amount, setAmount] = useState(String(item.amount));
@@ -26,9 +34,11 @@ function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; ma
       onChange();
     } catch (e) {
       setError((e as Error).message);
-      setBusy("");
     }
+    setBusy("");
   }
+
+  const locked = Boolean(busy) || refreshing;
 
   return (
     <article className="rounded-lg border border-zinc-200 bg-white p-5">
@@ -78,21 +88,27 @@ function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; ma
           </Field>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button disabled={Boolean(busy)} onClick={() => run("reject", () => api(`/proposals/${item.id}/reject`, { method: "POST" }))}>
-            Reject
+          <Button
+            loading={busy === "reject"}
+            disabled={locked}
+            onClick={() => run("reject", () => api(`/proposals/${item.id}/reject`, { method: "POST" }))}
+          >
+            {busy === "reject" ? "Rejecting…" : "Reject"}
           </Button>
           <Button
-            disabled={Boolean(busy)}
+            loading={busy === "rewrite"}
+            disabled={locked}
             onClick={() => run("rewrite", () => api(`/projects/${project.id}/generate`, { method: "POST" }))}
           >
             {busy === "rewrite" ? "Writing…" : "Rewrite"}
           </Button>
-          <Button disabled={Boolean(busy) || !dirty} onClick={() => run("save", save)}>
-            Save
+          <Button loading={busy === "save"} disabled={locked || !dirty} onClick={() => run("save", save)}>
+            {busy === "save" ? "Saving…" : "Save"}
           </Button>
           <Button
             variant="primary"
-            disabled={Boolean(busy) || !text.trim()}
+            loading={busy === "send"}
+            disabled={locked || !text.trim()}
             onClick={() =>
               run("send", async () => {
                 if (dirty) await save();
@@ -111,7 +127,7 @@ function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; ma
 const QUEUE = { status: "pending,failed" };
 
 export default function QueuePage() {
-  const { data, error, reload, setPage, q, search } = usePaged<ProposalWithProject>("/proposals", {
+  const { data, error, loading, fetching, reload, setPage, q, search } = usePaged<ProposalWithProject>("/proposals", {
     pageSize: 10,
     filters: QUEUE,
   });
@@ -125,14 +141,22 @@ export default function QueuePage() {
         action={<SearchInput onSearch={search} placeholder="Search project or proposal text" />}
       />
       <Notice>{error}</Notice>
-      {data?.total === 0 && <Empty>{emptyMessage(Boolean(q), "Nothing is waiting.")}</Empty>}
-      <div className="space-y-4">
-        {data?.items.map((item) => (
-          // Re-mount when the proposal is rewritten so the editor picks up the new text.
-          <QueueItem key={`${item.id}-${item.text.length}-${item.status}`} item={item} maxChars={settings?.proposal_max_chars ?? 1500} onChange={reload} />
-        ))}
-      </div>
-      <Pagination data={data} onPage={setPage} />
+      <ListBody loading={loading} fetching={fetching} rows={2}>
+        {data?.total === 0 && <Empty>{emptyMessage(Boolean(q), "Nothing is waiting.")}</Empty>}
+        <div className="space-y-4">
+          {data?.items.map((item) => (
+            // Re-mount when the proposal is rewritten so the editor picks up the new text.
+            <QueueItem
+              key={`${item.id}-${item.text.length}-${item.status}`}
+              item={item}
+              maxChars={settings?.proposal_max_chars ?? 1500}
+              refreshing={fetching}
+              onChange={reload}
+            />
+          ))}
+        </div>
+      </ListBody>
+      <Pagination data={data} fetching={fetching} onPage={setPage} />
     </>
   );
 }

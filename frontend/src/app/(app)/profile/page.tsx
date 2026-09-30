@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Badge, Button, Card, Empty, Field, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { ListBody, Pagination, SearchInput, emptyMessage } from "@/components/list";
 import { api, usePaged, type ProfileItem } from "@/lib/api";
 
 type Draft = Omit<ProfileItem, "id">;
@@ -55,10 +55,14 @@ function ItemForm({ initial, submitLabel, onSubmit, onCancel }: { initial: Draft
         <Textarea rows={3} value={draft.content} placeholder="What you built, the stack, the result, a link" onChange={(e) => setDraft({ ...draft, content: e.target.value })} />
       </Field>
       <div className="flex gap-2">
-        <Button variant="primary" disabled={busy || !draft.title.trim()} onClick={submit}>
-          {submitLabel}
+        <Button variant="primary" loading={busy} disabled={!draft.title.trim()} onClick={submit}>
+          {busy ? "Saving…" : submitLabel}
         </Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
+        {onCancel && (
+          <Button disabled={busy} onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -66,11 +70,14 @@ function ItemForm({ initial, submitLabel, onSubmit, onCancel }: { initial: Draft
 
 export default function ProfilePage() {
   const [kind, setKind] = useState("");
-  const { data, error, reload, setPage, q, search } = usePaged<ProfileItem>("/profile", { filters: { kind } });
+  const { data, error, loading, fetching, reload, setPage, q, search } = usePaged<ProfileItem>("/profile", { filters: { kind } });
   const [editing, setEditing] = useState<number | null>(null);
   const [actionError, setActionError] = useState("");
+  // The row action being saved, as "toggle-<id>" or "delete-<id>".
+  const [busy, setBusy] = useState("");
 
-  async function act(fn: () => Promise<unknown>) {
+  async function act(name: string, fn: () => Promise<unknown>) {
+    setBusy(name);
     setActionError("");
     try {
       await fn();
@@ -78,7 +85,10 @@ export default function ProfilePage() {
     } catch (e) {
       setActionError((e as Error).message);
     }
+    setBusy("");
   }
+
+  const locked = Boolean(busy) || fetching;
 
   return (
     <>
@@ -109,49 +119,63 @@ export default function ProfilePage() {
           </Select>
         </div>
       </div>
-      {data?.total === 0 && (
-        <Empty>{emptyMessage(Boolean(q || kind), "Nothing here yet. Add your bio and two or three past projects to start.")}</Empty>
-      )}
-      <div className="space-y-2">
-        {data?.items.map((item) => (
-          <div key={item.id} className="rounded-lg border border-zinc-200 bg-white p-4">
-            {editing === item.id ? (
-              <ItemForm
-                initial={item}
-                submitLabel="Save"
-                onCancel={() => setEditing(null)}
-                onSubmit={async (draft) => {
-                  await api(`/profile/${item.id}`, { method: "PUT", body: draft });
-                  setEditing(null);
-                  reload();
-                }}
-              />
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge tone="blue">{KINDS[item.kind]}</Badge>
-                    <span className={`font-medium ${item.is_active ? "text-zinc-900" : "text-zinc-400 line-through"}`}>{item.title}</span>
+      <ListBody loading={loading} fetching={fetching}>
+        {data?.total === 0 && (
+          <Empty>{emptyMessage(Boolean(q || kind), "Nothing here yet. Add your bio and two or three past projects to start.")}</Empty>
+        )}
+        <div className="space-y-2">
+          {data?.items.map((item) => (
+            <div key={item.id} className="rounded-lg border border-zinc-200 bg-white p-4">
+              {editing === item.id ? (
+                <ItemForm
+                  initial={item}
+                  submitLabel="Save"
+                  onCancel={() => setEditing(null)}
+                  onSubmit={async (draft) => {
+                    await api(`/profile/${item.id}`, { method: "PUT", body: draft });
+                    setEditing(null);
+                    reload();
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Badge tone="blue">{KINDS[item.kind]}</Badge>
+                      <span className={`font-medium ${item.is_active ? "text-zinc-900" : "text-zinc-400 line-through"}`}>{item.title}</span>
+                    </div>
+                    <div className="flex gap-3 text-xs font-medium text-indigo-700">
+                      <button type="button" className="disabled:opacity-50" disabled={locked} onClick={() => setEditing(item.id)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="disabled:opacity-50"
+                        disabled={locked}
+                        onClick={() =>
+                          act(`toggle-${item.id}`, () => api(`/profile/${item.id}`, { method: "PUT", body: { ...item, is_active: !item.is_active } }))
+                        }
+                      >
+                        {busy === `toggle-${item.id}` ? "Saving…" : item.is_active ? "Turn off" : "Turn on"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-red-700 disabled:opacity-50"
+                        disabled={locked}
+                        onClick={() => confirm(`Delete "${item.title}"?`) && act(`delete-${item.id}`, () => api(`/profile/${item.id}`, { method: "DELETE" }))}
+                      >
+                        {busy === `delete-${item.id}` ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-3 text-xs font-medium text-indigo-700">
-                    <button type="button" onClick={() => setEditing(item.id)}>
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => act(() => api(`/profile/${item.id}`, { method: "PUT", body: { ...item, is_active: !item.is_active } }))}>
-                      {item.is_active ? "Turn off" : "Turn on"}
-                    </button>
-                    <button type="button" className="text-red-700" onClick={() => confirm(`Delete "${item.title}"?`) && act(() => api(`/profile/${item.id}`, { method: "DELETE" }))}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-                {item.content && <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{item.content}</p>}
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-      <Pagination data={data} onPage={setPage} />
+                  {item.content && <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{item.content}</p>}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </ListBody>
+      <Pagination data={data} fetching={fetching} onPage={setPage} />
     </>
   );
 }

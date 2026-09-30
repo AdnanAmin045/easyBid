@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { Loading } from "@/components/ui";
 import { clearToken, getToken } from "@/lib/api";
 
 const NAV = [
@@ -28,7 +29,14 @@ export default function Shell({ children }: { children: ReactNode }) {
     if (signedIn === false) router.replace("/login");
   }, [signedIn, router]);
 
-  if (!signedIn) return null;
+  // Session not read yet, or on the way to the login page.
+  if (!signedIn) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loading />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col md:flex-row">

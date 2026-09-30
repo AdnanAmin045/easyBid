@@ -46,26 +46,44 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return body as T;
 }
 
-/** Load a GET endpoint; `reload()` fetches it again. Pass null to skip. */
-export function useApi<T>(path: string | null) {
+/**
+ * Load a GET endpoint; `reload()` fetches it again. Pass null to skip.
+ *
+ * `loading` is true until there is a result to show. `fetching` is true whenever a request is in flight,
+ * which includes a reload and, with `keepPrevious`, a move to another path while the last result stays on screen.
+ */
+export function useApi<T>(path: string | null, options: { keepPrevious?: boolean } = {}) {
+  const keepPrevious = options.keepPrevious ?? false;
   const [state, setState] = useState<{ path?: string; data?: T; error?: string }>({});
   const [version, setVersion] = useState(0);
+  const [settled, setSettled] = useState("");
+  const request = `${version}:${path}`;
 
   useEffect(() => {
     if (!path) return;
     let alive = true;
     api<T>(path)
       .then((data) => alive && setState({ path, data }))
-      .catch((e: Error) => alive && setState((s) => ({ ...s, path, error: e.message })));
+      .catch(
+        (e: Error) =>
+          alive && setState((s) => ({ data: keepPrevious || s.path === path ? s.data : undefined, path, error: e.message })),
+      )
+      .finally(() => alive && setSettled(request));
     return () => {
       alive = false;
     };
-  }, [path, version]);
+  }, [path, request, keepPrevious]);
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
-  const current = state.path === path ? state : {};
-  // `data` can legitimately be null (an endpoint with nothing to return), so loading is tracked by path.
-  return { data: current.data, error: current.error, loading: state.path !== path, reload };
+  // `data` can legitimately be null (an endpoint with nothing to return), so this is tracked by path.
+  const showing = state.path === path || (keepPrevious && state.path !== undefined);
+  return {
+    data: showing ? state.data : undefined,
+    error: state.path === path ? state.error : undefined,
+    loading: path !== null && !showing,
+    fetching: path !== null && settled !== request,
+    reload,
+  };
 }
 
 export type Mode = "manual" | "semi" | "auto";
@@ -277,7 +295,8 @@ export function usePaged<T>(path: string, options: { pageSize?: number; filters?
     setPage(1);
   }, []);
 
-  const result = useApi<Page<T>>(withQuery(path, { ...filters, q, page, page_size: pageSize }));
+  // The previous page stays on screen while the next one loads, so the list never blanks out.
+  const result = useApi<Page<T>>(withQuery(path, { ...filters, q, page, page_size: pageSize }), { keepPrevious: true });
   // A page can empty out after an action (approve, delete); step back instead of showing nothing.
   const lastPage = result.data?.pages;
   if (lastPage !== undefined && page > lastPage) setPage(lastPage);

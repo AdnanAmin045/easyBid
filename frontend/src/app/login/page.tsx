@@ -47,7 +47,7 @@ export default function LoginPage() {
               required
             />
           </Field>
-          <Button type="submit" variant="primary" className="w-full" disabled={busy}>
+          <Button type="submit" variant="primary" className="w-full" loading={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </Button>
         </div>

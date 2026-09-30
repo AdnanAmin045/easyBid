@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Card, Field, Input, Notice, PageHeader, Select } from "@/components/ui";
+import { Button, Card, Field, Input, Loading, Notice, PageHeader, Select } from "@/components/ui";
 import { api, useApi, type Account, type Settings, type Skill } from "@/lib/api";
 
 const MODELS = [
@@ -36,21 +36,22 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Skill[]>([]);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Which request is running: "import" or "search".
+  const [busy, setBusy] = useState("");
 
   const selectedIds = selected.map((s) => s.id);
   const add = (skills: Skill[]) => onChange([...selected, ...skills.filter((s) => !selectedIds.includes(s.id))]);
   const chip = blocked ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700";
 
-  async function run(fn: () => Promise<void>) {
-    setBusy(true);
+  async function run(name: string, fn: () => Promise<void>) {
+    setBusy(name);
     setError("");
     try {
       await fn();
     } catch (e) {
       setError((e as Error).message);
     }
-    setBusy(false);
+    setBusy("");
   }
 
   return (
@@ -58,8 +59,12 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
       title={title}
       action={
         importable && (
-          <Button disabled={busy} onClick={() => run(async () => add((await api<Account>("/account?refresh=true")).skills))}>
-            Import from my Freelancer profile
+          <Button
+            loading={busy === "import"}
+            disabled={Boolean(busy)}
+            onClick={() => run("import", async () => add((await api<Account>("/account?refresh=true")).skills))}
+          >
+            {busy === "import" ? "Importing…" : "Import from my Freelancer profile"}
           </Button>
         )
       }
@@ -86,12 +91,12 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
         className="flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          run(async () => setResults(await api<Skill[]>(`/skills?q=${encodeURIComponent(query)}`)));
+          run("search", async () => setResults(await api<Skill[]>(`/skills?q=${encodeURIComponent(query)}`)));
         }}
       >
         <Input value={query} placeholder="Search skills, e.g. Next.js" onChange={(e) => setQuery(e.target.value)} />
-        <Button type="submit" disabled={busy || !query.trim()}>
-          Search
+        <Button type="submit" loading={busy === "search"} disabled={Boolean(busy) || !query.trim()}>
+          {busy === "search" ? "Searching…" : "Search"}
         </Button>
       </form>
       {results.length > 0 && (
@@ -286,7 +291,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
       </Card>
 
       <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-3 md:-mx-8 md:px-8">
-        <Button variant="primary" disabled={busy} onClick={save}>
+        <Button variant="primary" loading={busy} onClick={save}>
           {busy ? "Saving…" : "Save settings"}
         </Button>
         {message && <span className={`text-sm ${message.tone === "red" ? "text-red-700" : "text-emerald-700"}`}>{message.text}</span>}
@@ -296,11 +301,12 @@ function SettingsForm({ initial }: { initial: Settings }) {
 }
 
 export default function SettingsPage() {
-  const { data, error } = useApi<Settings>("/settings");
+  const { data, error, loading } = useApi<Settings>("/settings");
   return (
     <>
       <PageHeader title="Settings" subtitle="Which projects to fetch, the rules they must pass, and how bids are priced." />
       <Notice>{error}</Notice>
+      {loading && <Loading label="Loading settings…" />}
       {data && <SettingsForm initial={data} />}
     </>
   );

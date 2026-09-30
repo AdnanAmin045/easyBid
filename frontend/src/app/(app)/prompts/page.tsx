@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button, Card, Field, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { Pagination, SearchInput } from "@/components/list";
+import { Badge, Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
+import { ListBody, Pagination, SearchInput } from "@/components/list";
 import { api, useApi, usePaged, type Project, type Prompt, type PromptKind, type PromptTest } from "@/lib/api";
 
 const KINDS: Record<PromptKind, { label: string; help: string; placeholder: string }> = {
@@ -62,7 +62,7 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
     });
 
   const setActive = (prompt: Prompt, on: boolean) =>
-    run("activate", async () => {
+    run(`activate-${prompt.id}`, async () => {
       await api(`/prompts/${prompt.id}/activate?active=${on}`, { method: "POST" });
       onSaved();
     });
@@ -84,7 +84,7 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
                 <Input value={note} maxLength={300} placeholder="What changed" onChange={(e) => setNote(e.target.value)} />
               </Field>
             </div>
-            <Button variant="primary" disabled={Boolean(busy) || !content.trim()} onClick={save}>
+            <Button variant="primary" loading={busy === "save"} disabled={Boolean(busy) || !content.trim()} onClick={save}>
               {busy === "save" ? "Saving…" : "Save as new version"}
             </Button>
           </div>
@@ -95,8 +95,8 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
           <div className="flex flex-wrap gap-3">
             <SearchInput onSearch={found.search} placeholder="Search projects" />
             <div className="min-w-48 flex-1">
-              <Select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">{projects.length ? "Choose a project" : "No projects found"}</option>
+              <Select aria-label="Project" value={projectId} disabled={found.loading} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">{found.fetching ? "Loading projects…" : projects.length ? "Choose a project" : "No projects found"}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title}
@@ -104,7 +104,7 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
                 ))}
               </Select>
             </div>
-            <Button disabled={Boolean(busy) || !projectId || !content.trim()} onClick={test}>
+            <Button loading={busy === "test"} disabled={Boolean(busy) || !projectId || !content.trim()} onClick={test}>
               {busy === "test" ? "Running…" : "Test"}
             </Button>
           </div>
@@ -129,40 +129,42 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
         <div className="mb-3">
           <SearchInput onSearch={versions.search} placeholder="Search versions" />
         </div>
-        {versions.data?.total === 0 && (
-          <p className="text-sm text-zinc-500">{versions.q ? "Nothing matches your search." : "No versions saved yet."}</p>
-        )}
-        <ul className="space-y-3">
-          {prompts.map((prompt) => (
-            <li key={prompt.id} className="rounded-md border border-zinc-200 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium">v{prompt.version}</span>
-                {prompt.is_active && <Badge tone="green">active</Badge>}
-              </div>
-              <p className="mt-1 text-xs text-zinc-500">
-                {new Date(prompt.created_at).toLocaleDateString()}
-                {prompt.note && ` · ${prompt.note}`}
-              </p>
-              <p className="mt-2 line-clamp-3 text-xs text-zinc-600">{prompt.content}</p>
-              <div className="mt-2 flex gap-3 text-xs font-medium text-indigo-700">
-                <button type="button" onClick={() => setContent(prompt.content)}>
-                  Load into editor
-                </button>
-                {!prompt.is_active && (
-                  <button type="button" disabled={Boolean(busy)} onClick={() => setActive(prompt, true)}>
-                    Make active
+        <ListBody loading={versions.loading} fetching={versions.fetching} rows={3}>
+          {versions.data?.total === 0 && (
+            <p className="text-sm text-zinc-500">{versions.q ? "Nothing matches your search." : "No versions saved yet."}</p>
+          )}
+          <ul className="space-y-3">
+            {prompts.map((prompt) => (
+              <li key={prompt.id} className="rounded-md border border-zinc-200 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium">v{prompt.version}</span>
+                  {prompt.is_active && <Badge tone="green">active</Badge>}
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {new Date(prompt.created_at).toLocaleDateString()}
+                  {prompt.note && ` · ${prompt.note}`}
+                </p>
+                <p className="mt-2 line-clamp-3 text-xs text-zinc-600">{prompt.content}</p>
+                <div className="mt-2 flex gap-3 text-xs font-medium text-indigo-700">
+                  <button type="button" onClick={() => setContent(prompt.content)}>
+                    Load into editor
                   </button>
-                )}
-                {prompt.is_active && kind === "selection" && (
-                  <button type="button" disabled={Boolean(busy)} onClick={() => setActive(prompt, false)}>
-                    Turn off
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-        <Pagination data={versions.data} onPage={versions.setPage} />
+                  {!prompt.is_active && (
+                    <button type="button" className="disabled:opacity-50" disabled={Boolean(busy) || versions.fetching} onClick={() => setActive(prompt, true)}>
+                      {busy === `activate-${prompt.id}` ? "Saving…" : "Make active"}
+                    </button>
+                  )}
+                  {prompt.is_active && kind === "selection" && (
+                    <button type="button" className="disabled:opacity-50" disabled={Boolean(busy) || versions.fetching} onClick={() => setActive(prompt, false)}>
+                      {busy === `activate-${prompt.id}` ? "Saving…" : "Turn off"}
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </ListBody>
+        <Pagination data={versions.data} fetching={versions.fetching} onPage={versions.setPage} />
       </Card>
     </div>
   );
@@ -188,6 +190,7 @@ export default function PromptsPage() {
         ))}
       </div>
       <Notice>{error}</Notice>
+      {loading && <Loading label="Loading prompt…" />}
       {/* The key resets the editor when switching tabs. */}
       {!loading && !error && <Editor key={kind} kind={kind} current={current ?? null} />}
     </>

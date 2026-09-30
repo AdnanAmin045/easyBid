@@ -11,17 +11,45 @@ const variants = {
   danger: "border border-red-200 bg-white text-red-700 hover:bg-red-50",
 };
 
+export function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={`shrink-0 animate-spin ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
+      <path fill="currentColor" className="opacity-75" d="M4 12a8 8 0 0 1 8-8V0C5.4 0 0 5.4 0 12h4z" />
+    </svg>
+  );
+}
+
+/** Shown in place of content that has not loaded yet. */
+export function Loading({ label = "Loading…" }: { label?: string }) {
+  return (
+    <div role="status" className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
+      <Spinner className="h-5 w-5" />
+      {label}
+    </div>
+  );
+}
+
+/** `loading` shows a spinner and blocks the button, so the action cannot be fired twice. */
 export function Button({
   variant = "secondary",
   className = "",
+  loading = false,
+  disabled,
+  children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof variants }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof variants; loading?: boolean }) {
   return (
     <button
       type="button"
       {...props}
-      className={`inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
-    />
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={`inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+    >
+      {loading && <Spinner />}
+      {children}
+    </button>
   );
 }
 

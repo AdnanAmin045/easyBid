@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Badge, Button, Card, Notice, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, Loading, Notice, PageHeader, Spinner } from "@/components/ui";
 import { api, timeAgo, useApi, type Mode, type Settings, type Stats } from "@/lib/api";
 
 const MODES: { value: Mode; label: string; hint: string }[] = [
@@ -31,12 +31,13 @@ function Fact({ label, value }: { label: string; value: string | number }) {
 }
 
 export default function DashboardPage() {
-  const { data: stats, error, reload } = useApi<Stats>("/stats");
-  const [busy, setBusy] = useState(false);
+  const { data: stats, error, fetching, reload } = useApi<Stats>("/stats");
+  // Which action is being saved: "run", "pause", "resume" or "mode".
+  const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<{ tone: "red" | "green"; text: string } | null>(null);
 
-  async function act(fn: () => Promise<string | void>) {
-    setBusy(true);
+  async function act(name: string, fn: () => Promise<string | void>) {
+    setBusy(name);
     setMessage(null);
     try {
       const text = await fn();
@@ -44,7 +45,7 @@ export default function DashboardPage() {
     } catch (e) {
       setMessage({ tone: "red", text: (e as Error).message });
     }
-    setBusy(false);
+    setBusy("");
     reload();
   }
 
@@ -54,13 +55,15 @@ export default function DashboardPage() {
   }
 
   const runNow = () =>
-    act(async () => {
+    act("run", async () => {
       const summary = await api<Record<string, string | number>>("/run", { method: "POST" });
       return `Run finished: ${Object.entries(summary).map(([k, v]) => `${k} ${v}`).join(", ")}`;
     });
 
   if (error) return <Notice>{error}</Notice>;
-  if (!stats) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!stats) return <Loading label="Loading dashboard…" />;
+  // Controls stay locked until the dashboard shows the result of the last action.
+  const working = Boolean(busy) || fetching;
 
   const setup = [
     { done: stats.skills_selected > 0, text: "Choose the skills to watch", href: "/settings" },
@@ -77,16 +80,26 @@ export default function DashboardPage() {
         subtitle={`Last run: ${timeAgo(stats.last_cycle)}`}
         action={
           <div className="flex gap-2">
-            <Button onClick={runNow} disabled={busy || stats.paused}>
-              Run now
+            <Button onClick={runNow} loading={busy === "run"} disabled={working || stats.paused}>
+              {busy === "run" ? "Running…" : "Run now"}
             </Button>
             {stats.paused ? (
-              <Button variant="primary" disabled={busy} onClick={() => act(() => updateSettings({ paused: false }))}>
-                Resume
+              <Button
+                variant="primary"
+                loading={busy === "resume"}
+                disabled={working}
+                onClick={() => act("resume", () => updateSettings({ paused: false }))}
+              >
+                {busy === "resume" ? "Resuming…" : "Resume"}
               </Button>
             ) : (
-              <Button variant="danger" disabled={busy} onClick={() => act(() => updateSettings({ paused: true }))}>
-                Pause everything
+              <Button
+                variant="danger"
+                loading={busy === "pause"}
+                disabled={working}
+                onClick={() => act("pause", () => updateSettings({ paused: true }))}
+              >
+                {busy === "pause" ? "Pausing…" : "Pause everything"}
               </Button>
             )}
           </div>
@@ -160,7 +173,16 @@ export default function DashboardPage() {
           )}
         </Card>
 
-        <Card title="Bidding mode">
+        <Card
+          title="Bidding mode"
+          action={
+            busy === "mode" && (
+              <span role="status" className="inline-flex items-center gap-2 text-xs text-zinc-500">
+                <Spinner /> Saving…
+              </span>
+            )
+          }
+        >
           <div className="space-y-2">
             {MODES.map((mode) => (
               <label
@@ -174,8 +196,8 @@ export default function DashboardPage() {
                   name="mode"
                   className="mt-1"
                   checked={stats.mode === mode.value}
-                  disabled={busy}
-                  onChange={() => act(() => updateSettings({ mode: mode.value }))}
+                  disabled={working}
+                  onChange={() => act("mode", () => updateSettings({ mode: mode.value }))}
                 />
                 <span>
                   <span className="block text-sm font-medium text-zinc-900">{mode.label}</span>
