@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { Badge, Button, Empty, Notice, PageHeader, Select } from "@/components/ui";
-import { api, budgetLabel, timeAgo, useApi, type Project, type Settings } from "@/lib/api";
+import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { api, budgetLabel, timeAgo, useApi, usePaged, type Project, type Settings } from "@/lib/api";
 
 const STATUSES = ["", "proposed", "filtered", "skipped", "error", "new"];
 
 export default function ProjectsPage() {
   const [status, setStatus] = useState("");
-  const { data, error, reload } = useApi<Project[]>(`/projects?limit=100${status ? `&status=${status}` : ""}`);
+  const [type, setType] = useState("");
+  const { data, error, reload, setPage, q, search } = usePaged<Project>("/projects", { filters: { status, type } });
   const { data: settings } = useApi<Settings>("/settings");
   const mine = new Set(settings?.skill_ids ?? []);
   const [busy, setBusy] = useState<number | null>(null);
@@ -32,21 +34,31 @@ export default function ProjectsPage() {
         title="Projects"
         subtitle="Every project EasyBid has seen, and why it was taken or left."
         action={
-          <div className="w-44">
-            <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s || "All statuses"}
-                </option>
-              ))}
-            </Select>
+          <div className="flex flex-wrap gap-2">
+            <SearchInput onSearch={search} placeholder="Search title, description, skills" />
+            <div className="w-40">
+              <Select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)}>
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s || "All statuses"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="w-32">
+              <Select aria-label="Type" value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="">All types</option>
+                <option value="fixed">Fixed</option>
+                <option value="hourly">Hourly</option>
+              </Select>
+            </div>
           </div>
         }
       />
       <Notice>{error || actionError}</Notice>
-      {data?.length === 0 && <Empty>No projects yet.</Empty>}
+      {data?.total === 0 && <Empty>{emptyMessage(Boolean(q || status || type), "No projects yet.")}</Empty>}
       <div className="space-y-2">
-        {data?.map((project) => (
+        {data?.items.map((project) => (
           <div key={project.id} className="rounded-lg border border-zinc-200 bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <a href={project.url} target="_blank" rel="noreferrer" className="min-w-0 font-medium text-zinc-900 hover:text-indigo-700">
@@ -83,6 +95,7 @@ export default function ProjectsPage() {
           </div>
         ))}
       </div>
+      <Pagination data={data} onPage={setPage} />
     </>
   );
 }

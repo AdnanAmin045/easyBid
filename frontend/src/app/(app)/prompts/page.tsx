@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Badge, Button, Card, Field, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, useApi, type Project, type Prompt, type PromptKind, type PromptTest } from "@/lib/api";
+import { Pagination, SearchInput } from "@/components/list";
+import { api, useApi, usePaged, type Project, type Prompt, type PromptKind, type PromptTest } from "@/lib/api";
 
 const KINDS: Record<PromptKind, { label: string; help: string; placeholder: string }> = {
   proposal: {
@@ -19,9 +20,14 @@ const KINDS: Record<PromptKind, { label: string; help: string; placeholder: stri
   },
 };
 
-function Editor({ kind, prompts, projects, onSaved }: { kind: PromptKind; prompts: Prompt[]; projects: Project[]; onSaved: () => void }) {
-  const active = prompts.find((p) => p.is_active);
-  const [content, setContent] = useState(active?.content ?? prompts[0]?.content ?? "");
+function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null }) {
+  const [filters] = useState({ kind });
+  const versions = usePaged<Prompt>("/prompts", { pageSize: 5, filters });
+  const found = usePaged<Project>("/projects", { pageSize: 30 });
+  const prompts = versions.data?.items ?? [];
+  const projects = found.data?.items ?? [];
+  const onSaved = versions.reload;
+  const [content, setContent] = useState(current?.content ?? "");
   const [note, setNote] = useState("");
   const [projectId, setProjectId] = useState("");
   const [result, setResult] = useState<PromptTest | null>(null);
@@ -87,9 +93,10 @@ function Editor({ kind, prompts, projects, onSaved }: { kind: PromptKind; prompt
         <Card title="Test on a real project">
           <p className="mb-3 text-sm text-zinc-500">Runs the text in the editor, saved or not. A test never sends a bid.</p>
           <div className="flex flex-wrap gap-3">
+            <SearchInput onSearch={found.search} placeholder="Search projects" />
             <div className="min-w-48 flex-1">
-              <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">{projects.length ? "Choose a project" : "No projects fetched yet"}</option>
+              <Select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">{projects.length ? "Choose a project" : "No projects found"}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title}
@@ -119,7 +126,12 @@ function Editor({ kind, prompts, projects, onSaved }: { kind: PromptKind; prompt
       </div>
 
       <Card title="Versions">
-        {prompts.length === 0 && <p className="text-sm text-zinc-500">No versions saved yet.</p>}
+        <div className="mb-3">
+          <SearchInput onSearch={versions.search} placeholder="Search versions" />
+        </div>
+        {versions.data?.total === 0 && (
+          <p className="text-sm text-zinc-500">{versions.q ? "Nothing matches your search." : "No versions saved yet."}</p>
+        )}
         <ul className="space-y-3">
           {prompts.map((prompt) => (
             <li key={prompt.id} className="rounded-md border border-zinc-200 p-3">
@@ -150,6 +162,7 @@ function Editor({ kind, prompts, projects, onSaved }: { kind: PromptKind; prompt
             </li>
           ))}
         </ul>
+        <Pagination data={versions.data} onPage={versions.setPage} />
       </Card>
     </div>
   );
@@ -157,8 +170,7 @@ function Editor({ kind, prompts, projects, onSaved }: { kind: PromptKind; prompt
 
 export default function PromptsPage() {
   const [kind, setKind] = useState<PromptKind>("proposal");
-  const { data: prompts, error, reload } = useApi<Prompt[]>("/prompts");
-  const { data: projects } = useApi<Project[]>("/projects?limit=30");
+  const { data: current, error, loading } = useApi<Prompt | null>(`/prompts/current?kind=${kind}`);
 
   return (
     <>
@@ -177,7 +189,7 @@ export default function PromptsPage() {
       </div>
       <Notice>{error}</Notice>
       {/* The key resets the editor when switching tabs. */}
-      {prompts && <Editor key={kind} kind={kind} prompts={prompts.filter((p) => p.kind === kind)} projects={projects ?? []} onSaved={reload} />}
+      {!loading && !error && <Editor key={kind} kind={kind} current={current ?? null} />}
     </>
   );
 }

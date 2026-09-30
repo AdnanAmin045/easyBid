@@ -1,20 +1,43 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Empty, Notice, PageHeader } from "@/components/ui";
-import { timeAgo, useApi, type ProposalWithProject } from "@/lib/api";
+import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { Badge, Empty, Notice, PageHeader, Select } from "@/components/ui";
+import { timeAgo, usePaged, type ProposalWithProject } from "@/lib/api";
+
+const BID_STATUSES = ["", "active", "awarded", "rejected", "revoked", "retracted"];
 
 export default function BidsPage() {
-  const { data, error } = useApi<ProposalWithProject[]>("/proposals?status=sent&limit=200");
+  const [bidStatus, setBidStatus] = useState("");
+  const { data, error, setPage, q, search } = usePaged<ProposalWithProject>("/proposals", {
+    filters: { status: "sent", bid_status: bidStatus },
+  });
   const [open, setOpen] = useState<number | null>(null);
 
   return (
     <>
-      <PageHeader title="Bids" subtitle="Bids sent from your account. Status is refreshed from Freelancer every 10 minutes." />
+      <PageHeader
+        title="Bids"
+        subtitle="Bids sent from your account. Status is refreshed from Freelancer every 10 minutes."
+        action={
+          <div className="flex flex-wrap gap-2">
+            <SearchInput onSearch={search} placeholder="Search project or proposal text" />
+            <div className="w-40">
+              <Select aria-label="Bid status" value={bidStatus} onChange={(e) => setBidStatus(e.target.value)}>
+                {BID_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s || "All bid statuses"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        }
+      />
       <Notice>{error}</Notice>
-      {data?.length === 0 && <Empty>No bids sent yet.</Empty>}
+      {data?.total === 0 && <Empty>{emptyMessage(Boolean(q || bidStatus), "No bids sent yet.")}</Empty>}
       <div className="space-y-2">
-        {data?.map((bid) => (
+        {data?.items.map((bid) => (
           <div key={bid.id} className="rounded-lg border border-zinc-200 bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <a href={bid.project.url} target="_blank" rel="noreferrer" className="min-w-0 font-medium text-zinc-900 hover:text-indigo-700">
@@ -38,6 +61,7 @@ export default function BidsPage() {
           </div>
         ))}
       </div>
+      <Pagination data={data} onPage={setPage} />
     </>
   );
 }

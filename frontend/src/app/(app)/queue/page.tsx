@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Badge, Button, Empty, Field, Input, Notice, PageHeader, Textarea } from "@/components/ui";
-import { api, budgetLabel, timeAgo, useApi, type ProposalWithProject, type Settings } from "@/lib/api";
+import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { api, budgetLabel, timeAgo, useApi, usePaged, type ProposalWithProject, type Settings } from "@/lib/api";
 
 function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; maxChars: number; onChange: () => void }) {
   const { project } = item;
@@ -107,21 +108,31 @@ function QueueItem({ item, maxChars, onChange }: { item: ProposalWithProject; ma
   );
 }
 
+const QUEUE = { status: "pending,failed" };
+
 export default function QueuePage() {
-  const { data, error, reload } = useApi<ProposalWithProject[]>("/proposals?status=pending,failed&limit=100");
+  const { data, error, reload, setPage, q, search } = usePaged<ProposalWithProject>("/proposals", {
+    pageSize: 10,
+    filters: QUEUE,
+  });
   const { data: settings } = useApi<Settings>("/settings");
 
   return (
     <>
-      <PageHeader title="Queue" subtitle="Proposals waiting for your approval. Approving sends the bid on Freelancer." />
+      <PageHeader
+        title="Queue"
+        subtitle="Proposals waiting for your approval. Approving sends the bid on Freelancer."
+        action={<SearchInput onSearch={search} placeholder="Search project or proposal text" />}
+      />
       <Notice>{error}</Notice>
-      {data?.length === 0 && <Empty>Nothing is waiting.</Empty>}
+      {data?.total === 0 && <Empty>{emptyMessage(Boolean(q), "Nothing is waiting.")}</Empty>}
       <div className="space-y-4">
-        {data?.map((item) => (
+        {data?.items.map((item) => (
           // Re-mount when the proposal is rewritten so the editor picks up the new text.
           <QueueItem key={`${item.id}-${item.text.length}-${item.status}`} item={item} maxChars={settings?.proposal_max_chars ?? 1500} onChange={reload} />
         ))}
       </div>
+      <Pagination data={data} onPage={setPage} />
     </>
   );
 }

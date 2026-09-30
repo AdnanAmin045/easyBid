@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Badge, Button, Card, Empty, Field, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, useApi, type ProfileItem } from "@/lib/api";
+import { Pagination, SearchInput, emptyMessage } from "@/components/list";
+import { api, usePaged, type ProfileItem } from "@/lib/api";
 
 type Draft = Omit<ProfileItem, "id">;
 
@@ -64,7 +65,8 @@ function ItemForm({ initial, submitLabel, onSubmit, onCancel }: { initial: Draft
 }
 
 export default function ProfilePage() {
-  const { data, error, reload } = useApi<ProfileItem[]>("/profile");
+  const [kind, setKind] = useState("");
+  const { data, error, reload, setPage, q, search } = usePaged<ProfileItem>("/profile", { filters: { kind } });
   const [editing, setEditing] = useState<number | null>(null);
   const [actionError, setActionError] = useState("");
 
@@ -94,9 +96,24 @@ export default function ProfilePage() {
         />
       </Card>
 
-      {data?.length === 0 && <Empty>Nothing here yet. Add your bio and two or three past projects to start.</Empty>}
+      <div className="mb-3 flex flex-wrap gap-2">
+        <SearchInput onSearch={search} placeholder="Search your profile" />
+        <div className="w-40">
+          <Select aria-label="Type" value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="">All types</option>
+            {Object.entries(KINDS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+      {data?.total === 0 && (
+        <Empty>{emptyMessage(Boolean(q || kind), "Nothing here yet. Add your bio and two or three past projects to start.")}</Empty>
+      )}
       <div className="space-y-2">
-        {data?.map((item) => (
+        {data?.items.map((item) => (
           <div key={item.id} className="rounded-lg border border-zinc-200 bg-white p-4">
             {editing === item.id ? (
               <ItemForm
@@ -134,6 +151,7 @@ export default function ProfilePage() {
           </div>
         ))}
       </div>
+      <Pagination data={data} onPage={setPage} />
     </>
   );
 }
