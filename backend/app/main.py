@@ -1,5 +1,7 @@
 import asyncio
 import logging
+
+import httpx
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("easybid")
 
 TICK_SECONDS = 15
+KEEPALIVE_SECONDS = 300
 
 
 def build_services() -> Services:
@@ -38,6 +41,21 @@ async def scheduler_loop(sv: Services, standby: bool) -> None:
         await asyncio.sleep(TICK_SECONDS)
 
 
+async def keepalive_loop(url: str) -> None:
+    """Render's free plan stops a service after 15 minutes without incoming requests, and polling stops with it.
+
+    A request to the service's own public URL counts as incoming, so this keeps it up while nobody has the
+    dashboard open.
+    """
+    async with httpx.AsyncClient(timeout=30) as http:
+        while True:
+            await asyncio.sleep(KEEPALIVE_SECONDS)
+            try:
+                await http.get(f"{url.rstrip('/')}/api/health")
+            except httpx.HTTPError as e:
+                logger.warning("Keep-alive request failed: %r", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     env = get_env()
@@ -48,9 +66,12 @@ async def lifespan(app: FastAPI):
     app.state.services = build_services()
     app.state.skill_cache = []
     # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
-    task = asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))
+    tasks = [asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))]
+    if env.render_external_url:
+        tasks.append(asyncio.create_task(keepalive_loop(env.render_external_url)))
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
     await app.state.services.freelancer.close()
 
 

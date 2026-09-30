@@ -14,6 +14,8 @@ class Env(BaseSettings):
     # The polling loop runs inside the web process. With false, the arq worker runs it and the web process
     # only takes over if the worker stops reporting in.
     embedded_scheduler: bool = True
+    # Set by Render on every service. Used to keep a free instance from spinning down, which would stop polling.
+    render_external_url: str = ""
 
     freelancer_token: str = ""
     freelancer_base_url: str = "https://www.freelancer.com/api"
