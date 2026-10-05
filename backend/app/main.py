@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import public, router
+from app.jobs import api as jobs_api
+from app.jobs.gmail import GmailClient
 from app.config import get_env
 from app.db import SessionLocal
 from app.services.freelancer import FreelancerClient
@@ -27,7 +29,13 @@ def build_services() -> Services:
     return Services(
         sessions=SessionLocal,
         freelancer=FreelancerClient(env.freelancer_token, env.freelancer_base_url),
-        llm=LLM(env.anthropic_api_key, env.gemini_api_key),
+        llm=LLM(
+            env.anthropic_api_key,
+            env.gemini_api_keys,
+            groq_key=env.groq_api_key,
+            cerebras_key=env.cerebras_api_key,
+            mistral_key=env.mistral_api_key,
+        ),
         notifier=Notifier(env.telegram_bot_token, env.telegram_chat_id),
     )
 
@@ -64,6 +72,11 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
 
     app.state.services = build_services()
+    app.state.jobs = jobs_api.JobServices(
+        sessions=SessionLocal,
+        llm=app.state.services.llm,
+        gmail=GmailClient(env.google_client_id, env.google_client_secret, env.google_redirect_uri),
+    )
     app.state.skill_cache = []
     # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
     tasks = [asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))]
@@ -73,6 +86,7 @@ async def lifespan(app: FastAPI):
     for task in tasks:
         task.cancel()
     await app.state.services.freelancer.close()
+    await app.state.jobs.gmail.close()
 
 
 app = FastAPI(title="EasyBid API", lifespan=lifespan)
@@ -84,3 +98,5 @@ app.add_middleware(
 )
 app.include_router(public)
 app.include_router(router)
+app.include_router(jobs_api.public)
+app.include_router(jobs_api.router)

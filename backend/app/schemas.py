@@ -49,6 +49,9 @@ class AppSettings(BaseModel):
     # Proposal writing
     selection_model: str = "claude-opus-5-5"
     proposal_model: str = "claude-opus-5-5"
+    # Tried in order when the model above is out of quota or busy. Models without an API key are skipped.
+    selection_fallback_models: list[str] = ["gemini-flash-lite-latest"]
+    proposal_fallback_models: list[str] = ["gemini-flash-lite-latest"]
     proposal_min_chars: int = Field(100, ge=1)
     proposal_max_chars: int = Field(1500, ge=100)
 

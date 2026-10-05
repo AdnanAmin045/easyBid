@@ -1,10 +1,16 @@
-# EasyBid
+# Worklane
 
-Watches Freelancer.com for new projects, decides which ones are worth a bid, writes the proposal with Claude, and sends the bid from your account.
+One console for two ways of finding work, each run as its own service:
+
+- **Freelance**: watches Freelancer.com for new projects, decides which ones are worth a bid, writes the proposal with AI, and sends the bid from your account.
+- **Jobs**: turns a pasted job description into a tailored application email, finds the recipient in the text, and sends it from your own Gmail after you review it.
 
 ```
-new project -> hard rules -> selection prompt (AI: bid or skip) -> proposal prompt (AI writes) -> approval queue or auto-bid
+Freelance: new project -> hard rules -> selection prompt -> proposal prompt -> approval queue or auto-bid
+Jobs:      job description -> recipient + details extracted -> AI draft -> your review -> Gmail
 ```
+
+The Jobs service lives in `backend/app/jobs/` with its own tables (`job_*`), API (`/api/jobs/...`) and pages (`/jobs/...`). It shares only the login, the database connection and the AI client with the freelance service.
 
 | Part | Tech | Hosted on |
 |---|---|---|
@@ -87,6 +93,28 @@ To run a single service instead of two, create only the web service and leave `E
 1. New Project > import the repository > Root Directory: `frontend`.
 2. Environment variable `NEXT_PUBLIC_API_URL` = your Render API URL, for example `https://easybid-api.onrender.com`.
 3. Deploy, then make sure the final Vercel URL is in `CORS_ORIGINS` on Render.
+
+## Jobs service
+
+### Connect Gmail (once)
+
+1. [Google Cloud console](https://console.cloud.google.com): create a project, then **APIs & Services > Library > Gmail API > Enable**.
+2. **OAuth consent screen**: user type External, add your Gmail as a test user, add the scopes `gmail.send` and `gmail.readonly`.
+3. **Publish the app** (Publishing status: In production). In Testing status Google expires the connection every 7 days. Without Google's verification you will see an "unverified app" warning when connecting; continue past it, it is your own app.
+4. **Credentials > Create credentials > OAuth client ID**, type Web application. Authorised redirect URI: `https://<your-render-api>/api/jobs/gmail/callback` (and `http://localhost:8000/api/jobs/gmail/callback` for local use).
+5. On the backend set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (exactly the URI from step 4) and `APP_URL` (the dashboard URL).
+6. Dashboard > Jobs > Settings > **Connect Gmail**.
+
+Only the refresh token is stored, encrypted with a key derived from `SECRET_KEY`. Changing `SECRET_KEY` means connecting Gmail again.
+
+### What protects your personal Gmail
+
+- A daily send limit (default 20), far below Gmail's own.
+- Plain-text emails, no tracking pixels, no link shorteners.
+- Every recipient is checked before sending: address format, a mail server for the domain, no throwaway inboxes.
+- A warning before writing again to an address or company applied to recently.
+- Nothing is sent without you pressing Send, and the same email can never go out twice.
+- The AI may only claim what is in Jobs > Profile & CVs, and never adds an address that is not in the job description.
 
 ## What is checked before a bid
 

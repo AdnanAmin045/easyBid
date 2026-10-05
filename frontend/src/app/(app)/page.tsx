@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Badge, Button, Card, Loading, Notice, PageHeader, Spinner } from "@/components/ui";
+import { Badge, Button, Card, Loading, Notice, PageHeader, Spinner, Stat } from "@/components/ui";
 import { api, timeAgo, useApi, type Mode, type Settings, type Stats } from "@/lib/api";
 
 const MODES: { value: Mode; label: string; hint: string }[] = [
@@ -11,21 +11,11 @@ const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: "auto", label: "Auto", hint: "Every selected project is bid on automatically." },
 ];
 
-function Stat({ label, value, href }: { label: string; value: string | number; href?: string }) {
-  const body = (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4">
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-zinc-900">{value}</div>
-    </div>
-  );
-  return href ? <Link href={href}>{body}</Link> : body;
-}
-
 function Fact({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="mt-1 font-medium text-zinc-900">{value}</div>
+      <div className="text-xs font-medium uppercase tracking-wide text-stone-500">{label}</div>
+      <div className="mt-1 font-medium text-stone-900">{value}</div>
     </div>
   );
 }
@@ -76,7 +66,7 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader
-        title="Dashboard"
+        title="Freelance overview"
         subtitle={`Last run: ${timeAgo(stats.last_cycle)}`}
         action={
           <div className="flex gap-2">
@@ -107,7 +97,7 @@ export default function DashboardPage() {
       />
 
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
-      {stats.paused && <Notice tone="amber">EasyBid is paused. No projects are fetched and no bids are sent.</Notice>}
+      {stats.paused && <Notice tone="amber">Bidding is paused. No projects are fetched and no bids are sent.</Notice>}
 
       {setup.length > 0 && (
         <Card title="Finish setup" className="mb-6">
@@ -115,11 +105,11 @@ export default function DashboardPage() {
             {setup.map((step) => (
               <li key={step.text}>
                 {step.href ? (
-                  <Link href={step.href} className="text-indigo-700 hover:underline">
+                  <Link href={step.href} className="text-brand-700 hover:underline">
                     {step.text}
                   </Link>
                 ) : (
-                  <span className="text-zinc-700">{step.text}</span>
+                  <span className="text-stone-700">{step.text}</span>
                 )}
               </li>
             ))}
@@ -128,10 +118,18 @@ export default function DashboardPage() {
       )}
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Waiting for approval" value={stats.proposals.pending ?? 0} href="/queue" />
-        <Stat label="Bids sent today" value={`${stats.sent_today} / ${stats.daily_bid_cap}`} href="/bids" />
-        <Stat label="Projects seen (24h)" value={seen} href="/projects" />
-        <Stat label="Awarded" value={stats.awarded} href="/bids" />
+        <Link href="/queue" className="block transition hover:-translate-y-px">
+          <Stat label="Waiting for approval" value={stats.proposals.pending ?? 0} />
+        </Link>
+        <Link href="/bids" className="block transition hover:-translate-y-px">
+          <Stat label="Bids sent today" value={`${stats.sent_today} / ${stats.daily_bid_cap}`} />
+        </Link>
+        <Link href="/projects" className="block transition hover:-translate-y-px">
+          <Stat label="Projects seen (24h)" value={seen} />
+        </Link>
+        <Link href="/bids" className="block transition hover:-translate-y-px">
+          <Stat label="Awarded" value={stats.awarded} />
+        </Link>
       </div>
 
       {!stats.scheduler_running && (
@@ -141,7 +139,7 @@ export default function DashboardPage() {
         </Notice>
       )}
       {stats.account_problem && <Notice>Bidding is blocked: {stats.account_problem}.</Notice>}
-      {stats.waiting && !stats.paused && <Notice>No new projects are taken right now: {stats.waiting}. EasyBid carries on by itself.</Notice>}
+      {stats.waiting && !stats.paused && <Notice>No new projects are taken right now: {stats.waiting}. Bidding carries on by itself.</Notice>}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title={`Freelancer account${stats.account.username ? `: ${stats.account.username}` : ""}`} className="lg:col-span-2">
@@ -165,12 +163,12 @@ export default function DashboardPage() {
                   }
                 />
               </div>
-              <p className="mt-4 text-sm text-zinc-500">
+              <p className="mt-4 text-sm text-stone-500">
                 Projects this account cannot bid on are dropped before any AI is used.
               </p>
             </>
           ) : (
-            <p className="text-sm text-zinc-500">Checked on the first run.</p>
+            <p className="text-sm text-stone-500">Checked on the first run.</p>
           )}
         </Card>
 
@@ -178,7 +176,7 @@ export default function DashboardPage() {
           title="Bidding mode"
           action={
             busy === "mode" && (
-              <span role="status" className="inline-flex items-center gap-2 text-xs text-zinc-500">
+              <span role="status" className="inline-flex items-center gap-2 text-xs text-stone-500">
                 <Spinner /> Saving…
               </span>
             )
@@ -189,7 +187,7 @@ export default function DashboardPage() {
               <label
                 key={mode.value}
                 className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
-                  stats.mode === mode.value ? "border-indigo-400 bg-indigo-50" : "border-zinc-200"
+                  stats.mode === mode.value ? "border-brand-400 bg-brand-50" : "border-stone-200"
                 }`}
               >
                 <input
@@ -201,8 +199,8 @@ export default function DashboardPage() {
                   onChange={() => act("mode", () => updateSettings({ mode: mode.value }))}
                 />
                 <span>
-                  <span className="block text-sm font-medium text-zinc-900">{mode.label}</span>
-                  <span className="block text-xs text-zinc-500">{mode.hint}</span>
+                  <span className="block text-sm font-medium text-stone-900">{mode.label}</span>
+                  <span className="block text-xs text-stone-500">{mode.hint}</span>
                 </span>
               </label>
             ))}
@@ -211,13 +209,13 @@ export default function DashboardPage() {
 
         <Card title="Last 24 hours">
           {seen === 0 ? (
-            <p className="text-sm text-zinc-500">No projects fetched yet.</p>
+            <p className="text-sm text-stone-500">No projects fetched yet.</p>
           ) : (
             <ul className="space-y-2 text-sm">
               {Object.entries(p24).map(([status, count]) => (
                 <li key={status} className="flex items-center justify-between">
                   <Badge>{status}</Badge>
-                  <span className="font-medium text-zinc-800">{count}</span>
+                  <span className="font-medium text-stone-800">{count}</span>
                 </li>
               ))}
             </ul>
@@ -226,10 +224,10 @@ export default function DashboardPage() {
 
         <Card title="Proposal prompt results" className="lg:col-span-2">
           {stats.prompts.length === 0 ? (
-            <p className="text-sm text-zinc-500">Appears once bids have been sent.</p>
+            <p className="text-sm text-stone-500">Appears once bids have been sent.</p>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-zinc-500">
+              <thead className="text-left text-xs uppercase text-stone-500">
                 <tr>
                   <th className="pb-2">Version</th>
                   <th className="pb-2">Bids sent</th>
@@ -239,7 +237,7 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {stats.prompts.map((row) => (
-                  <tr key={row.version} className="border-t border-zinc-100">
+                  <tr key={row.version} className="border-t border-stone-100">
                     <td className="py-2">
                       v{row.version} {row.is_active && <Badge tone="blue">active</Badge>}
                     </td>

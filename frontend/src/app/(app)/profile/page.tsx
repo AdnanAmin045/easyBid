@@ -125,7 +125,7 @@ export default function ProfilePage() {
         )}
         <div className="space-y-2">
           {data?.items.map((item) => (
-            <div key={item.id} className="rounded-lg border border-zinc-200 bg-white p-4">
+            <div key={item.id} className="rounded-lg border border-stone-200 bg-white p-4">
               {editing === item.id ? (
                 <ItemForm
                   initial={item}
@@ -142,9 +142,9 @@ export default function ProfilePage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Badge tone="blue">{KINDS[item.kind]}</Badge>
-                      <span className={`font-medium ${item.is_active ? "text-zinc-900" : "text-zinc-400 line-through"}`}>{item.title}</span>
+                      <span className={`font-medium ${item.is_active ? "text-stone-900" : "text-stone-400 line-through"}`}>{item.title}</span>
                     </div>
-                    <div className="flex gap-3 text-xs font-medium text-indigo-700">
+                    <div className="flex gap-3 text-xs font-medium text-brand-700">
                       <button type="button" className="disabled:opacity-50" disabled={locked} onClick={() => setEditing(item.id)}>
                         Edit
                       </button>
@@ -168,7 +168,7 @@ export default function ProfilePage() {
                       </button>
                     </div>
                   </div>
-                  {item.content && <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{item.content}</p>}
+                  {item.content && <p className="mt-2 whitespace-pre-wrap text-sm text-stone-600">{item.content}</p>}
                 </>
               )}
             </div>

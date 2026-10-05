@@ -12,7 +12,15 @@ const MODELS = [
   { value: "gemini-flash-latest", label: "Gemini Flash, newest (free tier, often busy)" },
   { value: "gemini-flash-lite-latest", label: "Gemini Flash Lite (free tier, fastest)" },
   { value: "gemini-pro-latest", label: "Gemini Pro" },
+  { value: "cerebras/gpt-oss-120b", label: "Cerebras GPT-OSS 120B (free tier)" },
+  { value: "cerebras/llama-3.3-70b", label: "Cerebras Llama 3.3 70B (free tier)" },
+  { value: "groq/openai/gpt-oss-120b", label: "Groq GPT-OSS 120B (free tier)" },
+  { value: "groq/llama-3.3-70b-versatile", label: "Groq Llama 3.3 70B (free tier)" },
+  { value: "groq/llama-3.1-8b-instant", label: "Groq Llama 3.1 8B (free tier, for choosing only)" },
+  { value: "mistral/mistral-small-latest", label: "Mistral Small (free tier)" },
+  { value: "mistral/mistral-medium-latest", label: "Mistral Medium (free tier)" },
 ];
+const modelLabel = (value: string) => MODELS.find((m) => m.value === value)?.label ?? value;
 const UPGRADES = [
   { value: "NDA", label: "NDA required" },
   { value: "sealed", label: "Sealed bids" },
@@ -21,6 +29,57 @@ const UPGRADES = [
 
 const toSkills = (ids: number[], names: string[]): Skill[] => ids.map((id, i) => ({ id, name: names[i] ?? String(id) }));
 const toList = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
+
+function FallbackModels({ title, models, onChange }: { title: string; models: string[]; onChange: (models: string[]) => void }) {
+  const [custom, setCustom] = useState("");
+  const add = (model: string) => {
+    const value = model.trim();
+    if (value && !models.includes(value)) onChange([...models, value]);
+  };
+  const move = (i: number, by: number) => {
+    const next = [...models];
+    [next[i], next[i + by]] = [next[i + by], next[i]];
+    onChange(next);
+  };
+  return (
+    <div>
+      <span className="mb-1.5 block text-[13px] font-medium text-stone-700">{title}</span>
+      {models.length === 0 && <p className="mb-2 text-xs text-stone-500">No fallbacks: bidding waits when the main model is out of quota.</p>}
+      <ol className="mb-2 space-y-1">
+        {models.map((model, i) => (
+          <li key={model} className="flex items-center gap-2 rounded-[6px] border border-stone-200 px-2 py-1 text-sm">
+            <span className="w-5 text-xs text-stone-500">{i + 1}.</span>
+            <span className="flex-1 truncate">{modelLabel(model)}</span>
+            <button type="button" aria-label="Move up" disabled={i === 0} className="px-1 disabled:opacity-30" onClick={() => move(i, -1)}>↑</button>
+            <button type="button" aria-label="Move down" disabled={i === models.length - 1} className="px-1 disabled:opacity-30" onClick={() => move(i, 1)}>↓</button>
+            <button type="button" aria-label={`Remove ${model}`} className="px-1" onClick={() => onChange(models.filter((m) => m !== model))}>×</button>
+          </li>
+        ))}
+      </ol>
+      <div className="flex gap-2">
+        <Select value="" onChange={(e) => add(e.target.value)}>
+          <option value="">Add a fallback model…</option>
+          {MODELS.filter((m) => !models.includes(m.value)).map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <form
+        className="mt-2 flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add(custom);
+          setCustom("");
+        }}
+      >
+        <Input value={custom} placeholder="Or type a model id, e.g. groq/qwen/qwen3-32b" onChange={(e) => setCustom(e.target.value)} />
+        <Button type="submit" disabled={!custom.trim()}>Add</Button>
+      </form>
+    </div>
+  );
+}
 
 interface SkillPickerProps {
   title: string;
@@ -41,7 +100,7 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
 
   const selectedIds = selected.map((s) => s.id);
   const add = (skills: Skill[]) => onChange([...selected, ...skills.filter((s) => !selectedIds.includes(s.id))]);
-  const chip = blocked ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700";
+  const chip = blocked ? "bg-red-50 text-red-700" : "bg-brand-50 text-brand-700";
 
   async function run(name: string, fn: () => Promise<void>) {
     setBusy(name);
@@ -70,9 +129,9 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
       }
     >
       <Notice>{error}</Notice>
-      <p className="mb-3 text-sm text-zinc-500">{hint}</p>
+      <p className="mb-3 text-sm text-stone-500">{hint}</p>
       <div className="mb-4 flex flex-wrap gap-2">
-        {selected.length === 0 && <span className="text-sm text-zinc-500">{empty}</span>}
+        {selected.length === 0 && <span className="text-sm text-stone-500">{empty}</span>}
         {selected.map((skill) => (
           <span key={skill.id} className={`inline-flex items-center gap-1 rounded-full py-1 pl-3 pr-1 text-xs font-medium ${chip}`}>
             {skill.name}
@@ -104,7 +163,7 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
           {results
             .filter((s) => !selectedIds.includes(s.id))
             .map((skill) => (
-              <button key={skill.id} type="button" className="rounded-full border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-50" onClick={() => add([skill])}>
+              <button key={skill.id} type="button" className="rounded-full border border-stone-300 px-3 py-1 text-xs hover:bg-stone-50" onClick={() => add([skill])}>
                 + {skill.name}
               </button>
             ))}
@@ -202,7 +261,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
       </Card>
 
       <Card title="Rules">
-        <p className="mb-4 text-sm text-zinc-500">Checked before any AI call. A project that fails a rule costs nothing.</p>
+        <p className="mb-4 text-sm text-stone-500">Checked before any AI call. A project that fails a rule costs nothing.</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Minimum fixed budget (USD)" hint="Compared with the top of the client's range.">
             {num("min_fixed_budget", { min: 0 })}
@@ -227,7 +286,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <fieldset>
-            <legend className="mb-1 text-sm font-medium text-zinc-700">Project types</legend>
+            <legend className="mb-1 text-sm font-medium text-stone-700">Project types</legend>
             {(["fixed", "hourly"] as const).map((type) => (
               <label key={type} className="mr-4 inline-flex items-center gap-2 text-sm capitalize">
                 <input type="checkbox" checked={s.project_types.includes(type)} onChange={() => update({ project_types: toggle(s.project_types, type) })} />
@@ -236,7 +295,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
             ))}
           </fieldset>
           <fieldset>
-            <legend className="mb-1 text-sm font-medium text-zinc-700">Skip projects marked</legend>
+            <legend className="mb-1 text-sm font-medium text-stone-700">Skip projects marked</legend>
             {UPGRADES.map((upgrade) => (
               <label key={upgrade.value} className="mr-4 inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={s.skip_upgrades.includes(upgrade.value)} onChange={() => update({ skip_upgrades: toggle(s.skip_upgrades, upgrade.value) })} />
@@ -285,12 +344,27 @@ function SettingsForm({ initial }: { initial: Settings }) {
               ))}
             </Select>
           </Field>
+          <FallbackModels
+            title="If it is out of quota, choose with"
+            models={s.selection_fallback_models}
+            onChange={(selection_fallback_models) => update({ selection_fallback_models })}
+          />
+          <FallbackModels
+            title="If it is out of quota, write with"
+            models={s.proposal_fallback_models}
+            onChange={(proposal_fallback_models) => update({ proposal_fallback_models })}
+          />
+          <p className="text-xs text-stone-500 sm:col-span-2">
+            Fallbacks are tried in order. Each provider needs its key on the server (GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY,
+            MISTRAL_API_KEY); models without a key are skipped. With GEMINI_API_KEY_2 to _5 set, each Gemini key tries every
+            Gemini model, cheapest to best, before the next key takes over.
+          </p>
           <Field label="Proposal minimum characters">{num("proposal_min_chars", { min: 1 })}</Field>
           <Field label="Proposal maximum characters">{num("proposal_max_chars", { min: 100 })}</Field>
         </div>
       </Card>
 
-      <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-3 md:-mx-8 md:px-8">
+      <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-stone-200 bg-white/95 px-4 py-3 md:-mx-8 md:px-8">
         <Button variant="primary" loading={busy} onClick={save}>
           {busy ? "Saving…" : "Save settings"}
         </Button>

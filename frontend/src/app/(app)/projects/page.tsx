@@ -32,7 +32,7 @@ export default function ProjectsPage() {
     <>
       <PageHeader
         title="Projects"
-        subtitle="Every project EasyBid has seen, and why it was taken or left."
+        subtitle="Every Freelancer.com project seen, and why it was taken or left."
         action={
           <div className="flex flex-wrap gap-2">
             <SearchInput onSearch={search} placeholder="Search title, description, skills" />
@@ -60,17 +60,17 @@ export default function ProjectsPage() {
         {data?.total === 0 && <Empty>{emptyMessage(Boolean(q || status || type), "No projects yet.")}</Empty>}
         <div className="space-y-2">
           {data?.items.map((project) => (
-            <div key={project.id} className="rounded-lg border border-zinc-200 bg-white p-4">
+            <div key={project.id} className="rounded-lg border border-stone-200 bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <a href={project.url} target="_blank" rel="noreferrer" className="min-w-0 font-medium text-zinc-900 hover:text-indigo-700">
+                <a href={project.url} target="_blank" rel="noreferrer" className="min-w-0 font-medium text-stone-900 hover:text-brand-700">
                   {project.title}
                 </a>
                 <div className="flex items-center gap-2">
-                  {project.score !== null && <span className="text-xs text-zinc-500">score {project.score}</span>}
+                  {project.score !== null && <span className="text-xs text-stone-500">score {project.score}</span>}
                   <Badge>{project.status}</Badge>
                 </div>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500">
                 <span>{budgetLabel(project)}</span>
                 <span>{project.bid_count} bids</span>
                 <span>posted {timeAgo(project.submitted_at)}</span>
@@ -80,14 +80,14 @@ export default function ProjectsPage() {
                   <span
                     key={skill}
                     className={`rounded px-1.5 py-0.5 text-xs ${
-                      mine.has(project.skill_ids[i]) ? "bg-indigo-50 font-medium text-indigo-700" : "bg-zinc-100 text-zinc-500"
+                      mine.has(project.skill_ids[i]) ? "bg-brand-50 font-medium text-brand-700" : "bg-stone-100 text-stone-500"
                     }`}
                   >
                     {skill}
                   </span>
                 ))}
               </div>
-              {project.reason && <p className="mt-2 text-sm text-zinc-600">{project.reason}</p>}
+              {project.reason && <p className="mt-2 text-sm text-stone-600">{project.reason}</p>}
               {["filtered", "skipped", "error"].includes(project.status) && (
                 <Button className="mt-3" loading={busy === project.id} disabled={busy !== null || fetching} onClick={() => write(project)}>
                   {busy === project.id ? "Writing…" : "Write a proposal anyway"}

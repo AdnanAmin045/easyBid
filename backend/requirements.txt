@@ -9,3 +9,9 @@ anthropic>=0.60
 google-genai>=1.0
 arq>=0.26
 pyjwt>=2.8
+python-multipart>=0.0.9
+dnspython>=2.6
+cryptography>=42
+email-validator>=2.1
+# Time zones for Gemini's daily quota reset; Windows and slim images have no system database
+tzdata>=2024.1

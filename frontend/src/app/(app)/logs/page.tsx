@@ -13,7 +13,7 @@ export default function LogsPage() {
     <>
       <PageHeader
         title="Logs"
-        subtitle="What EasyBid did, newest first."
+        subtitle="Everything the platform did, newest first."
         action={
           <div className="flex flex-wrap gap-2">
             <SearchInput onSearch={search} placeholder="Search logs" />
@@ -34,16 +34,16 @@ export default function LogsPage() {
       <ListBody loading={loading} fetching={fetching} rows={6}>
         {data?.total === 0 && <Empty>{emptyMessage(Boolean(q || level), "Nothing logged yet.")}</Empty>}
         {data && data.total > 0 && (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white">
             <table className="w-full text-sm">
               <tbody>
                 {data.items.map((log) => (
-                  <tr key={log.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="whitespace-nowrap px-4 py-2 text-xs text-zinc-500">{new Date(log.created_at).toLocaleString()}</td>
+                  <tr key={log.id} className="border-b border-stone-100 last:border-0">
+                    <td className="whitespace-nowrap px-4 py-2 text-xs text-stone-500">{new Date(log.created_at).toLocaleString()}</td>
                     <td className="px-2 py-2">
                       <Badge tone={log.level === "error" ? "red" : "gray"}>{log.event}</Badge>
                     </td>
-                    <td className="px-4 py-2 text-zinc-700">{log.message}</td>
+                    <td className="px-4 py-2 text-stone-700">{log.message}</td>
                   </tr>
                 ))}
               </tbody>

@@ -118,6 +118,8 @@ export interface Settings {
   milestone_percentage: number;
   selection_model: string;
   proposal_model: string;
+  selection_fallback_models: string[];
+  proposal_fallback_models: string[];
   proposal_min_chars: number;
   proposal_max_chars: number;
 }
@@ -302,4 +304,141 @@ export function usePaged<T>(path: string, options: { pageSize?: number; filters?
   if (lastPage !== undefined && page > lastPage) setPage(lastPage);
 
   return { ...result, page, setPage, q, search };
+}
+
+// --- Jobs service ---------------------------------------------------------------
+
+export type ApplicationStatus = "draft" | "sending" | "sent" | "failed";
+
+export interface EmailCheck {
+  email: string;
+  valid: boolean;
+  reason: string;
+  applied_before: string | null;
+}
+
+export interface Extraction {
+  company: string;
+  role: string;
+  location: string;
+  work_mode: string;
+  recipient_name: string;
+  apply_via: "email" | "link" | "unknown";
+  apply_link: string;
+  apply_instructions: string[];
+  required_skills: string[];
+  deadline: string;
+  emails: EmailCheck[];
+  warning: string;
+}
+
+export interface Resume {
+  id: number;
+  name: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface ApplicationBrief {
+  id: number;
+  status: ApplicationStatus;
+  company: string;
+  role: string;
+  location: string;
+  to_email: string;
+  subject: string;
+  error: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface Application extends ApplicationBrief {
+  source_text: string;
+  details: Extraction;
+  cc: string[];
+  body: string;
+  resume_id: number | null;
+  resume: Resume | null;
+  prompt_id: number | null;
+  model: string;
+  gmail_thread_id: string | null;
+}
+
+export interface JobSettings {
+  sender_name: string;
+  signature: string;
+  model: string;
+  daily_send_limit: number;
+  email_min_chars: number;
+  email_max_chars: number;
+  duplicate_window_days: number;
+}
+
+export interface GmailStatus {
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  connected_at: string | null;
+}
+
+export interface JobProfileItem {
+  id: number;
+  kind: "summary" | "experience" | "project" | "skill" | "education" | "link";
+  title: string;
+  content: string;
+  is_active: boolean;
+}
+
+export interface JobsOverview {
+  gmail: { configured: boolean; connected: boolean; email: string | null };
+  ai_problem: string | null;
+  prompt_active: boolean;
+  profile_items: number;
+  resumes: number;
+  sent_today: number;
+  daily_send_limit: number;
+  counts: Partial<Record<ApplicationStatus, number>>;
+  recent: ApplicationBrief[];
+}
+
+/** Upload a file with the session token; `api()` only sends JSON. */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+  } catch {
+    throw new Error(`Cannot reach the API at ${BASE}`);
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessage(body, res.status));
+  return body as T;
+}
+
+/** Download a protected file and hand it to the browser. */
+export async function download(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function fileSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export function gmailThreadUrl(threadId: string): string {
+  return `https://mail.google.com/mail/u/0/#all/${threadId}`;
 }

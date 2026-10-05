@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.models import Project, Prompt, Proposal
 from app.services import store
+from app.services.llm import LLMError
 from app.services.pipeline import SendError, run_cycle, send_proposal, sync_bids
 from tests.conftest import raw_project
 
@@ -25,6 +26,11 @@ async def add_prompts(sv, selection=True):
 async def proposals(sv):
     async with sv.sessions() as session:
         return list(await session.scalars(select(Proposal)))
+
+
+async def all_projects(sv):
+    async with sv.sessions() as session:
+        return list(await session.scalars(select(Project)))
 
 
 async def statuses(sv):
@@ -102,6 +108,35 @@ async def test_rules_and_selection_stop_projects_before_ai_writes(sv, fake_freel
     assert (await statuses(sv))[2] == "skipped"
     assert sv.llm.proposal_calls == 0
     assert await proposals(sv) == []
+
+
+async def test_ai_out_of_quota_keeps_projects_for_later(sv, fake_freelancer):
+    await add_prompts(sv)
+    fake_freelancer.projects = [raw_project(1), raw_project(2)]
+    sv.llm.error = LLMError("Gemini API error 429: quota exceeded", transient=True)
+    summary = await run_cycle(sv)
+    # The first failure rests the AI; the second project is not thrown at it.
+    assert summary == {"fetched": 2, "waiting for AI": 1}
+    assert sv.llm.select_calls == 1
+    assert await statuses(sv) == {1: "new", 2: "new"}
+    assert (await run_cycle(sv))["skipped"].startswith("AI is out of quota or busy")
+
+    # Once the rest is over, both projects are picked up again.
+    sv.llm.error = None
+    async with sv.sessions() as session:
+        await store.set_config(session, store.RESTRICTIONS, {})
+        await session.commit()
+    await run_cycle(sv)
+    assert await statuses(sv) == {1: "proposed", 2: "proposed"}
+    assert all(p.reason == "matches my skills" for p in await all_projects(sv))
+
+
+async def test_ai_error_about_the_project_is_final(sv, fake_freelancer):
+    await add_prompts(sv)
+    fake_freelancer.projects = [raw_project(1)]
+    sv.llm.error = LLMError("The model declined this request")
+    await run_cycle(sv)
+    assert await statuses(sv) == {1: "error"}
 
 
 async def test_no_selection_prompt_means_rules_decide(sv, fake_freelancer):

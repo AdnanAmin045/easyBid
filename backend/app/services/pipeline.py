@@ -23,6 +23,9 @@ BID_SYNC_INTERVAL = timedelta(minutes=10)
 # The scheduler records that it is alive this often; the dashboard warns when the record goes stale.
 HEARTBEAT = timedelta(minutes=1)
 HEARTBEAT_STALE = timedelta(minutes=3)
+# After the AI provider says it is out of quota or overloaded, wait this long before asking again.
+AI_COOLDOWN = timedelta(minutes=5)
+WAITING_FOR_AI = "waiting for AI"
 # One pipeline run at a time per process; database claims cover other processes.
 _cycle_lock = asyncio.Lock()
 
@@ -89,10 +92,26 @@ async def bidding_wait(session: AsyncSession, s: AppSettings) -> str | None:
     """Why no bid can go out right now, so nothing should be fetched or written. None if bids can go out."""
     if await bids_sent_today(session) >= s.daily_bid_cap:
         return f"daily bid cap reached ({s.daily_bid_cap})"
-    until = (await store.get_config(session, store.RESTRICTIONS)).get("backoff_until")
+    restrictions = await store.get_config(session, store.RESTRICTIONS)
+    until = restrictions.get("backoff_until")
     if until and utcnow() < datetime.fromisoformat(until):
         return f"holding off until {until[11:16]} UTC after repeated refused bids"
+    until = restrictions.get("ai_wait_until")
+    if until and utcnow() < datetime.fromisoformat(until):
+        return f"AI is out of quota or busy, trying again at {until[11:16]} UTC"
     return None
+
+
+async def _wait_for_ai(session: AsyncSession, project: Project, error: LLMError) -> None:
+    """The AI could not answer for now: the project goes back in line and the AI gets a rest."""
+    project.status, project.reason = ProjectStatus.NEW, f"{WAITING_FOR_AI}: {error}"[:500]
+    until = utcnow() + AI_COOLDOWN
+    restrictions = await store.get_config(session, store.RESTRICTIONS)
+    await store.set_config(session, store.RESTRICTIONS, {**restrictions, "ai_wait_until": until.isoformat()})
+    store.log_event(
+        session, "ai_busy", f"{project.title}: {error}. Retrying after {until:%H:%M} UTC.", "error", project.id
+    )
+    await session.commit()
 
 
 async def fetch_new_projects(sv: Services, session: AsyncSession, s: AppSettings) -> int:
@@ -230,7 +249,8 @@ async def process_project(sv: Services, project_id: int) -> str:
         claimed = await session.execute(
             update(Project)
             .where(Project.id == project_id, Project.status == ProjectStatus.NEW)
-            .values(status=ProjectStatus.PROCESSING)
+            # Clears a "waiting for AI" note left by an earlier attempt.
+            .values(status=ProjectStatus.PROCESSING, reason=None)
         )
         await session.commit()
         if claimed.rowcount != 1:
@@ -262,6 +282,10 @@ async def process_project(sv: Services, project_id: int) -> str:
                     return project.status
             draft = await write_draft(sv, session, project, s)
         except LLMError as e:
+            if e.transient:
+                # Not this project's fault: keep it, and it is picked up again while it is still fresh.
+                await _wait_for_ai(session, project, e)
+                return WAITING_FOR_AI
             project.status, project.reason = ProjectStatus.ERROR, str(e)
             store.log_event(session, "ai_error", f"{project.title}: {e}", "error", project.id)
             await session.commit()

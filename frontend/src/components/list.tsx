@@ -25,10 +25,10 @@ export function ListSkeleton({ rows = 4 }: { rows?: number }) {
   return (
     <div role="status" aria-label="Loading" className="space-y-2">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="animate-pulse rounded-lg border border-zinc-200 bg-white p-4">
-          <div className="h-4 w-2/5 rounded bg-zinc-200" />
-          <div className="mt-3 h-3 w-4/5 rounded bg-zinc-100" />
-          <div className="mt-2 h-3 w-3/5 rounded bg-zinc-100" />
+        <div key={i} className="animate-pulse rounded-lg border border-stone-200 bg-white p-4">
+          <div className="h-4 w-2/5 rounded bg-stone-200" />
+          <div className="mt-3 h-3 w-4/5 rounded bg-stone-100" />
+          <div className="mt-2 h-3 w-3/5 rounded bg-stone-100" />
         </div>
       ))}
     </div>
@@ -60,7 +60,7 @@ export function Pagination<T>({
   const last = Math.min(data.page * data.page_size, data.total);
 
   return (
-    <nav aria-label="Pagination" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-600">
+    <nav aria-label="Pagination" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-stone-600">
       <span className="inline-flex items-center gap-2">
         {first}–{last} of {data.total}
         {fetching && <Spinner />}

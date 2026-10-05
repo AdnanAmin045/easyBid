@@ -71,11 +71,11 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-6 lg:col-span-2">
         <Card title={KINDS[kind].label}>
-          <p className="mb-3 text-sm text-zinc-500">{KINDS[kind].help}</p>
+          <p className="mb-3 text-sm text-stone-500">{KINDS[kind].help}</p>
           <Notice>{error}</Notice>
           <Notice tone="green">{saved}</Notice>
           <Textarea rows={14} value={content} placeholder={KINDS[kind].placeholder} onChange={(e) => setContent(e.target.value)} />
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-stone-500">
             The job details and your profile are attached to every request automatically, so the prompt only needs your instructions.
           </p>
           <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -91,7 +91,7 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
         </Card>
 
         <Card title="Test on a real project">
-          <p className="mb-3 text-sm text-zinc-500">Runs the text in the editor, saved or not. A test never sends a bid.</p>
+          <p className="mb-3 text-sm text-stone-500">Runs the text in the editor, saved or not. A test never sends a bid.</p>
           <div className="flex flex-wrap gap-3">
             <SearchInput onSearch={found.search} placeholder="Search projects" />
             <div className="min-w-48 flex-1">
@@ -109,15 +109,15 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
             </Button>
           </div>
           {result && kind === "selection" && (
-            <div className="mt-4 rounded-md bg-zinc-50 p-3 text-sm">
+            <div className="mt-4 rounded-md bg-stone-50 p-3 text-sm">
               <Badge tone={result.apply ? "green" : "gray"}>{result.apply ? "bid" : "skip"}</Badge>
-              <p className="mt-2 text-zinc-700">{result.reason}</p>
+              <p className="mt-2 text-stone-700">{result.reason}</p>
             </div>
           )}
           {result && kind === "proposal" && (
-            <div className="mt-4 rounded-md bg-zinc-50 p-3 text-sm">
-              <p className="whitespace-pre-wrap text-zinc-800">{result.text}</p>
-              <p className="mt-3 text-xs text-zinc-500">
+            <div className="mt-4 rounded-md bg-stone-50 p-3 text-sm">
+              <p className="whitespace-pre-wrap text-stone-800">{result.text}</p>
+              <p className="mt-3 text-xs text-stone-500">
                 {result.chars} characters · bid {result.amount} · period {result.period}
               </p>
             </div>
@@ -131,21 +131,21 @@ function Editor({ kind, current }: { kind: PromptKind; current: Prompt | null })
         </div>
         <ListBody loading={versions.loading} fetching={versions.fetching} rows={3}>
           {versions.data?.total === 0 && (
-            <p className="text-sm text-zinc-500">{versions.q ? "Nothing matches your search." : "No versions saved yet."}</p>
+            <p className="text-sm text-stone-500">{versions.q ? "Nothing matches your search." : "No versions saved yet."}</p>
           )}
           <ul className="space-y-3">
             {prompts.map((prompt) => (
-              <li key={prompt.id} className="rounded-md border border-zinc-200 p-3">
+              <li key={prompt.id} className="rounded-md border border-stone-200 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium">v{prompt.version}</span>
                   {prompt.is_active && <Badge tone="green">active</Badge>}
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-stone-500">
                   {new Date(prompt.created_at).toLocaleDateString()}
                   {prompt.note && ` · ${prompt.note}`}
                 </p>
-                <p className="mt-2 line-clamp-3 text-xs text-zinc-600">{prompt.content}</p>
-                <div className="mt-2 flex gap-3 text-xs font-medium text-indigo-700">
+                <p className="mt-2 line-clamp-3 text-xs text-stone-600">{prompt.content}</p>
+                <div className="mt-2 flex gap-3 text-xs font-medium text-brand-700">
                   <button type="button" onClick={() => setContent(prompt.content)}>
                     Load into editor
                   </button>
@@ -177,13 +177,13 @@ export default function PromptsPage() {
   return (
     <>
       <PageHeader title="Prompts" subtitle="Your instructions to the AI. Every save is kept as a version." />
-      <div className="mb-6 inline-flex rounded-md border border-zinc-300 bg-white p-1">
+      <div className="mb-6 inline-flex rounded-md border border-stone-300 bg-white p-1">
         {(Object.keys(KINDS) as PromptKind[]).map((k) => (
           <button
             key={k}
             type="button"
             onClick={() => setKind(k)}
-            className={`rounded px-3 py-1.5 text-sm font-medium ${kind === k ? "bg-indigo-600 text-white" : "text-zinc-600"}`}
+            className={`rounded px-3 py-1.5 text-sm font-medium ${kind === k ? "bg-brand-600 text-white" : "text-stone-600"}`}
           >
             {KINDS[k].label}
           </button>

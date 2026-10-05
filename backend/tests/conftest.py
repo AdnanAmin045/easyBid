@@ -30,11 +30,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db import build_test_engine
+from app.jobs import models as _jobs_models  # noqa: F401  (registers the Jobs tables)
 from app.models import Base, utcnow
 from app.schemas import AppSettings
 from app.services import store
 from app.services.freelancer import FreelancerClient
-from app.services.llm import Selection
+from app.services.llm import LLMError, Selection
 from app.services.notifier import Notifier
 from app.services.pipeline import Services
 
@@ -52,9 +53,12 @@ class FakeLLM:
         self.text = "I have built this exact kind of API before and can start today. " * 3
         self.select_calls = 0
         self.proposal_calls = 0
+        self.error: LLMError | None = None
 
     async def select(self, prompt, project, profile, s):
         self.select_calls += 1
+        if self.error:
+            raise self.error
         return Selection(apply=self.apply, reason="matches my skills" if self.apply else "not a fit")
 
     async def write_proposal(self, prompt, project, profile, amount, period, s):

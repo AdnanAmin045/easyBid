@@ -41,13 +41,13 @@ function QueueItem({ item, maxChars, refreshing, onChange }: QueueItemProps) {
   const locked = Boolean(busy) || refreshing;
 
   return (
-    <article className="rounded-lg border border-zinc-200 bg-white p-5">
+    <article className="rounded-lg border border-stone-200 bg-white p-5">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <a href={project.url} target="_blank" rel="noreferrer" className="font-semibold text-zinc-900 hover:text-indigo-700">
+          <a href={project.url} target="_blank" rel="noreferrer" className="font-semibold text-stone-900 hover:text-brand-700">
             {project.title}
           </a>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
             <span>{budgetLabel(project)}</span>
             <span>{project.bid_count} bids</span>
             <span>score {project.score ?? "–"}</span>
@@ -57,22 +57,22 @@ function QueueItem({ item, maxChars, refreshing, onChange }: QueueItemProps) {
         <Badge>{item.status}</Badge>
       </div>
 
-      {project.reason && <p className="mb-3 text-sm text-zinc-600">AI: {project.reason}</p>}
+      {project.reason && <p className="mb-3 text-sm text-stone-600">AI: {project.reason}</p>}
       {item.error && <Notice>{item.error}</Notice>}
       <Notice>{error}</Notice>
 
-      <button type="button" className="mb-3 text-xs font-medium text-indigo-700" onClick={() => setShowJob(!showJob)}>
+      <button type="button" className="mb-3 text-xs font-medium text-brand-700" onClick={() => setShowJob(!showJob)}>
         {showJob ? "Hide job description" : "Show job description"}
       </button>
       {showJob && (
-        <div className="mb-4 rounded-md bg-zinc-50 p-3 text-sm text-zinc-700">
+        <div className="mb-4 rounded-md bg-stone-50 p-3 text-sm text-stone-700">
           <p className="whitespace-pre-wrap">{project.description}</p>
-          <p className="mt-2 text-xs text-zinc-500">{project.skills.join(" · ")}</p>
+          <p className="mt-2 text-xs text-stone-500">{project.skills.join(" · ")}</p>
         </div>
       )}
 
       <Textarea rows={9} value={text} onChange={(e) => setText(e.target.value)} />
-      <div className={`mt-1 text-right text-xs ${text.length > maxChars ? "text-red-600" : "text-zinc-500"}`}>
+      <div className={`mt-1 text-right text-xs ${text.length > maxChars ? "text-red-600" : "text-stone-500"}`}>
         {text.length} / {maxChars} characters
       </div>
 
