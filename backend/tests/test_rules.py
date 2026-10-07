@@ -61,13 +61,20 @@ def test_skill_matching():
     blocked = project(skills=["React.js", "PHP"], skill_ids=[759, 3])
     assert "blocked skill: PHP" in evaluate(blocked, s, utcnow()).reason
 
+    # Two matches, but most of the tags are someone else's work.
+    diluted = project(
+        skills=["React.js", "Node.js", "Instagram Ads", "Facebook Ads", "Advertising", "Digital Marketing"],
+        skill_ids=[759, 500, 11, 12, 13, 14],
+    )
+    assert "only 2 of 6 skill tags are mine (33%, minimum 40%)" in evaluate(diluted, s, utcnow()).reason
+
     strong = project(skills=["React.js", "Node.js", "AWS"], skill_ids=[759, 500, 9])
     assert evaluate(strong, s, utcnow()).passed
     assert matched_skills(strong, s) == ["React.js", "Node.js"]
 
 
 def test_min_score_rejects():
-    result = evaluate(project(skill_ids=[1, 2, 3, 4]), AppSettings(skill_ids=[759], min_score=90, min_skill_matches=0), utcnow())
+    result = evaluate(project(skill_ids=[1, 2, 3, 4]), AppSettings(skill_ids=[759], min_score=90, min_skill_matches=0, min_skill_match_percent=0), utcnow())
     assert not result.passed and "score" in result.reason
 
 

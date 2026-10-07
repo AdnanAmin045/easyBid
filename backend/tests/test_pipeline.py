@@ -139,12 +139,13 @@ async def test_ai_error_about_the_project_is_final(sv, fake_freelancer):
     assert await statuses(sv) == {1: "error"}
 
 
-async def test_no_selection_prompt_means_rules_decide(sv, fake_freelancer):
+async def test_no_selection_prompt_still_checks_fit(sv, fake_freelancer):
     await add_prompts(sv, selection=False)
+    sv.llm.apply = False
     fake_freelancer.projects = [raw_project(1)]
     await run_cycle(sv)
-    assert sv.llm.select_calls == 0
-    assert await statuses(sv) == {1: "proposed"}
+    assert sv.llm.select_calls == 1
+    assert await statuses(sv) == {1: "skipped"}
 
 
 async def test_nothing_runs_without_a_proposal_prompt(sv, fake_freelancer):

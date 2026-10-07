@@ -39,6 +39,12 @@ def check_rules(project: Project, s: AppSettings, now: datetime) -> str | None:
     matched = matched_skills(project, s)
     if len(matched) < s.min_skill_matches:
         return f"only {len(matched)} of my skills match (minimum {s.min_skill_matches}): {', '.join(matched) or 'none'}"
+    percent = skill_match_percent(project, s)
+    if project.skill_ids and percent < s.min_skill_match_percent:
+        return (
+            f"only {len(matched)} of {len(project.skill_ids)} skill tags are mine "
+            f"({percent:.0f}%, minimum {s.min_skill_match_percent}%): {', '.join(matched) or 'none'}"
+        )
 
     if project.type not in s.project_types:
         return f"{project.type} projects are disabled"

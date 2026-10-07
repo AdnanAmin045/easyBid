@@ -1,4 +1,4 @@
-"""The bidding pipeline: fetch -> hard rules -> selection prompt -> proposal prompt -> bid."""
+"""The bidding pipeline: fetch -> hard rules -> selection check -> proposal prompt -> bid."""
 
 import asyncio
 import logging
@@ -12,7 +12,7 @@ from app.models import ProfileItem, Project, ProjectStatus, Prompt, Proposal, Pr
 from app.schemas import AppSettings
 from app.services import eligibility, store
 from app.services.freelancer import FreelancerClient, FreelancerError, bid_status, normalize_project
-from app.services.llm import LLM, LLMError, proposal_problem
+from app.services.llm import DEFAULT_SELECTION_PROMPT, LLM, LLMError, proposal_problem
 from app.services.notifier import Notifier
 from app.services.rules import evaluate, price_bid
 
@@ -272,14 +272,15 @@ async def process_project(sv: Services, project_id: int) -> str:
             return project.status
 
         try:
+            # Every project gets a fit check; without an active selection prompt the built-in one is used.
             selection_prompt = await active_prompt(session, "selection")
-            if selection_prompt:
-                decision = await sv.llm.select(selection_prompt.content, project, await active_profile(session), s)
-                project.reason = decision.reason
-                if not decision.apply:
-                    project.status = ProjectStatus.SKIPPED
-                    await session.commit()
-                    return project.status
+            content = selection_prompt.content if selection_prompt else DEFAULT_SELECTION_PROMPT
+            decision = await sv.llm.select(content, project, await active_profile(session), s)
+            project.reason = decision.reason
+            if not decision.apply:
+                project.status = ProjectStatus.SKIPPED
+                await session.commit()
+                return project.status
             draft = await write_draft(sv, session, project, s)
         except LLMError as e:
             if e.transient:

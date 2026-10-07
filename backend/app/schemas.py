@@ -23,6 +23,8 @@ class AppSettings(BaseModel):
     skill_names: list[str] = []
     # How many of a project's skill tags must be mine, so one loose tag is not enough
     min_skill_matches: int = Field(2, ge=0, le=20)
+    # Share of a project's skill tags that must be mine, so a few matches among many foreign tags are not enough
+    min_skill_match_percent: int = Field(40, ge=0, le=100)
     # A project tagged with any of these is dropped
     blocked_skill_ids: list[int] = []
     blocked_skill_names: list[str] = []

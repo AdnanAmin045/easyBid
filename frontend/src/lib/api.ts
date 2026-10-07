@@ -99,6 +99,7 @@ export interface Settings {
   skill_ids: number[];
   skill_names: string[];
   min_skill_matches: number;
+  min_skill_match_percent: number;
   blocked_skill_ids: number[];
   blocked_skill_names: string[];
   project_types: ("fixed" | "hourly")[];

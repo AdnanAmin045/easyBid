@@ -20,7 +20,7 @@ class ProjectStatus:
     NEW = "new"  # fetched, not processed yet
     PROCESSING = "processing"  # claimed by a pipeline run
     FILTERED = "filtered"  # rejected by hard rules
-    SKIPPED = "skipped"  # rejected by the selection prompt
+    SKIPPED = "skipped"  # rejected by the selection check
     PROPOSED = "proposed"  # proposal exists (pending, sent, rejected or failed)
     ERROR = "error"  # pipeline failed on this project
 

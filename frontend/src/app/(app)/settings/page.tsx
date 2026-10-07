@@ -226,6 +226,12 @@ function SettingsForm({ initial }: { initial: Settings }) {
           >
             {num("min_skill_matches", { min: 0, max: 20 })}
           </Field>
+          <Field
+            label="Minimum share of tags (%)"
+            hint="How much of a project's skill tags must be yours. At 40, a project with 2 of your skills among 10 tags is dropped. 0 turns this off."
+          >
+            {num("min_skill_match_percent", { min: 0, max: 100 })}
+          </Field>
         </div>
       </Card>
 
