@@ -103,14 +103,21 @@ def job_block(project: Project, s: AppSettings) -> str:
     low, high = project.budget_min, project.budget_max
     budget = f"{low:g}-{high:g}" if low and high else f"{(high or low or 0):g}"
     avg = f" (average bid {project.bid_avg:.0f})" if project.bid_avg else ""
+    upgrades_str = ", ".join(project.upgrades) if project.upgrades else "none"
+    is_high_val = (
+        (project.type == "fixed" and (project.budget_max or project.budget_min or 0) * (project.usd_rate or 1) >= 1500)
+        or (project.type == "hourly" and (project.budget_max or project.budget_min or 0) * (project.usd_rate or 1) >= 50)
+    )
+    high_val_note = " [High-Value Project - client expects structured delivery, milestones, and high professionalism]" if is_high_val else ""
     return (
         "<job>\n"
         f"Title: {project.title}\n"
         f"Type: {project.type}\n"
-        f"Budget: {budget} {project.currency}{unit}\n"
+        f"Budget: {budget} {project.currency}{unit}{high_val_note}\n"
         f"Bids so far: {project.bid_count}{avg}\n"
         f"Skills: {', '.join(project.skills or [])}\n"
         f"Skills I have for this job: {', '.join(matched_skills(project, s)) or 'none listed'}\n"
+        f"Project Upgrades: {upgrades_str}\n"
         f"Description:\n{project.description}\n"
         "</job>"
     )
