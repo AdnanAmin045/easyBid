@@ -70,15 +70,46 @@ class FreelancerClient:
         return [{"id": j["id"], "name": j["name"]} for j in result]
 
     async def search_active_projects(self, skill_ids: list[int], limit: int = 50) -> list[dict]:
-        params = {
-            "jobs[]": skill_ids,
-            "limit": limit,
-            "full_description": "true",
-            "job_details": "true",
-            "sort_field": "time_updated",
-        }
-        result = await self._get("/projects/0.1/projects/active/", params)
-        return result.get("projects") or []
+        if not skill_ids:
+            return []
+        # Plus/Premier plans support up to 80 skills. Chunk in batches of up to 40
+        # to ensure the Freelancer API processes all skills and returns fresh projects across each cluster.
+        chunk_size = 40
+        if len(skill_ids) <= chunk_size:
+            params = {
+                "jobs[]": skill_ids,
+                "limit": limit,
+                "full_description": "true",
+                "job_details": "true",
+                "sort_field": "time_updated",
+            }
+            result = await self._get("/projects/0.1/projects/active/", params)
+            return result.get("projects") or []
+
+        chunks = [skill_ids[i : i + chunk_size] for i in range(0, len(skill_ids), chunk_size)]
+        tasks = [
+            self._get(
+                "/projects/0.1/projects/active/",
+                {
+                    "jobs[]": chunk,
+                    "limit": limit,
+                    "full_description": "true",
+                    "job_details": "true",
+                    "sort_field": "time_updated",
+                },
+            )
+            for chunk in chunks
+        ]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        seen_ids = set()
+        merged = []
+        for res in responses:
+            if isinstance(res, dict):
+                for p in res.get("projects") or []:
+                    if p["id"] not in seen_ids:
+                        seen_ids.add(p["id"])
+                        merged.append(p)
+        return merged
 
     async def get_bids(self, bid_ids: list[int]) -> list[dict]:
         result = await self._get("/projects/0.1/bids/", {"bids[]": bid_ids, "limit": len(bid_ids)})
