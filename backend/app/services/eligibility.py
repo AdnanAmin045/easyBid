@@ -10,8 +10,15 @@ from datetime import timedelta
 
 from app.models import Project, utcnow
 
-# Refusals about one project's own requirements (such as a minimum account balance), not about the account.
-PROJECT_REQUIREMENT_CODES = ("BID_MINIMUM_REQUIREMENT_NOT_MET",)
+# Refusals about one project's own requirements (such as minimum account balance or plan tier restrictions), not an account suspension.
+PROJECT_REQUIREMENT_CODES = (
+    "BID_MINIMUM_REQUIREMENT_NOT_MET",
+    "MEMBERSHIP_UPGRADE_REQUIRED",
+    "HIGH_VALUE_BID_RESTRICTED",
+    "SEALED_BID_RESTRICTED",
+    "UPGRADE_REQUIRED",
+    "KYC_REQUIRED",
+)
 
 # After this many refused bids in a row, hold off for a while and then carry on by itself.
 # A single refusal never stops anything: the pipeline just moves to the next project.
