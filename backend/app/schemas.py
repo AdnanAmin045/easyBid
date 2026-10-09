@@ -39,7 +39,7 @@ class AppSettings(BaseModel):
     max_age_minutes: int = Field(60, ge=1)
     min_score: int = Field(0, ge=0, le=100)
     exclude_keywords: list[str] = []
-    skip_upgrades: list[str] = ["NDA", "sealed"]
+    skip_upgrades: list[str] = ["NDA"]
 
     # Pricing
     fixed_budget_position: float = Field(0.6, ge=0, le=1)  # 0 = budget minimum, 1 = maximum

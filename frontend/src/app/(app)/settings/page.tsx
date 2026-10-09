@@ -308,6 +308,9 @@ function SettingsForm({ initial }: { initial: Settings }) {
                 {upgrade.label}
               </label>
             ))}
+            <p className="mt-1.5 text-xs text-stone-500">
+              Tip: If your Freelancer subscription supports sealed bids, keep &quot;Sealed bids&quot; unchecked to bid on private projects where other freelancers cannot view or copy your proposal.
+            </p>
           </fieldset>
         </div>
       </Card>
