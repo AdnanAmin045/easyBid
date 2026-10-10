@@ -41,6 +41,14 @@ class AppSettings(BaseModel):
     exclude_keywords: list[str] = []
     skip_upgrades: list[str] = ["NDA"]
 
+    # Client qualifications (Freelancer.com employer verification & track record)
+    client_payment_verified: bool = False
+    client_min_hires: int = Field(0, ge=0)
+    client_min_rating: float = Field(0.0, ge=0.0, le=5.0)
+    client_identity_verified: bool = False
+    client_email_verified: bool = False
+    client_deposit_made: bool = False
+
     # Pricing
     fixed_budget_position: float = Field(0.6, ge=0, le=1)  # 0 = budget minimum, 1 = maximum
     hourly_rate: float = Field(25, ge=1)
@@ -104,6 +112,7 @@ class ProjectBrief(BaseModel):
     skill_ids: list[int]
     language: str | None
     upgrades: list[str]
+    client_info: dict = Field(default_factory=dict)
     submitted_at: datetime | None
     status: str
     score: int | None

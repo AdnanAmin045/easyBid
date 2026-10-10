@@ -64,6 +64,7 @@ class Project(Base):
     skill_ids: Mapped[list] = mapped_column(JSONB, default=list)
     language: Mapped[str | None] = mapped_column(String(10))
     upgrades: Mapped[list] = mapped_column(JSONB, default=list)
+    client_info: Mapped[dict] = mapped_column(JSONB, default=dict)
     submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     status: Mapped[str] = mapped_column(String(20), default=ProjectStatus.NEW, index=True)
