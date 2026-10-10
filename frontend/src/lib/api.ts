@@ -112,6 +112,12 @@ export interface Settings {
   min_score: number;
   exclude_keywords: string[];
   skip_upgrades: string[];
+  client_payment_verified: boolean;
+  client_min_hires: number;
+  client_min_rating: number;
+  client_identity_verified: boolean;
+  client_email_verified: boolean;
+  client_deposit_made: boolean;
   fixed_budget_position: number;
   hourly_rate: number;
   default_period_days: number;
@@ -142,6 +148,18 @@ export interface Proposal {
   sent_at: string | null;
 }
 
+export interface ClientInfo {
+  payment_verified?: boolean;
+  email_verified?: boolean;
+  phone_verified?: boolean;
+  identity_verified?: boolean;
+  deposit_made?: boolean;
+  hires?: number;
+  rating?: number;
+  completion_rate?: number;
+  username?: string;
+}
+
 export interface Project {
   id: number;
   title: string;
@@ -158,6 +176,7 @@ export interface Project {
   skill_ids: number[];
   language: string | null;
   upgrades: string[];
+  client_info?: ClientInfo;
   submitted_at: string | null;
   status: string;
   score: number | null;

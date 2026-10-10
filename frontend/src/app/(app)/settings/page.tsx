@@ -315,6 +315,68 @@ function SettingsForm({ initial }: { initial: Settings }) {
         </div>
       </Card>
 
+      <Card title="Client qualifications">
+        <p className="mb-4 text-sm text-stone-500">
+          Filter projects based on the employer&apos;s Freelancer.com verification status and hiring history.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field
+            label="Minimum past hires"
+            hint="Minimum completed projects or reviews by the client. 0 allows all clients, including new ones."
+          >
+            {num("client_min_hires", { min: 0 })}
+          </Field>
+          <Field
+            label="Minimum client rating (0 - 5.0)"
+            hint="Minimum client star rating. 0 turns this off."
+          >
+            {num("client_min_rating", { min: 0, max: 5, step: 0.1 })}
+          </Field>
+        </div>
+        <div className="mt-4">
+          <fieldset>
+            <legend className="mb-2 text-sm font-medium text-stone-700">Require client verifications</legend>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={s.client_payment_verified}
+                  onChange={(e) => update({ client_payment_verified: e.target.checked })}
+                />
+                Payment method verified
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={s.client_identity_verified}
+                  onChange={(e) => update({ client_identity_verified: e.target.checked })}
+                />
+                Identity verified
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={s.client_email_verified}
+                  onChange={(e) => update({ client_email_verified: e.target.checked })}
+                />
+                Email verified
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={s.client_deposit_made}
+                  onChange={(e) => update({ client_deposit_made: e.target.checked })}
+                />
+                Deposit made
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-stone-500">
+              Tip: Enabling &quot;Payment method verified&quot; prevents bidding on unverified accounts and potential spam projects.
+            </p>
+          </fieldset>
+        </div>
+      </Card>
+
       <Card title="Pricing">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Fixed price position" hint="0 bids the client's minimum, 1 the maximum, 0.6 a little above the middle.">

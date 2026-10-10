@@ -70,10 +70,21 @@ export default function ProjectsPage() {
                   <Badge>{project.status}</Badge>
                 </div>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500">
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
                 <span>{budgetLabel(project)}</span>
                 <span>{project.bid_count} bids</span>
                 <span>posted {timeAgo(project.submitted_at)}</span>
+                {project.client_info?.payment_verified ? (
+                  <span className="inline-flex items-center gap-0.5 font-medium text-emerald-700">
+                    <span className="text-[11px]">✓</span> Payment verified
+                  </span>
+                ) : project.client_info ? (
+                  <span className="text-stone-400">Payment unverified</span>
+                ) : null}
+                {project.client_info?.rating ? (
+                  <span className="font-medium text-amber-600">★ {project.client_info.rating.toFixed(1)}</span>
+                ) : null}
+                {project.client_info?.hires ? <span>{project.client_info.hires} hires</span> : null}
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
                 {project.skills.map((skill, i) => (
