@@ -70,6 +70,25 @@ def check_rules(project: Project, s: AppSettings, now: datetime) -> str | None:
     if blocked:
         return f"upgrade not allowed: {', '.join(blocked)}"
 
+    # Client qualifications
+    client = getattr(project, "client_info", None) or {}
+    if s.client_payment_verified and not client.get("payment_verified"):
+        return "client payment method not verified"
+    if s.client_min_hires > 0 and client.get("hires", 0) < s.client_min_hires:
+        hires = client.get("hires", 0)
+        return f"client has only {hires} hires (minimum {s.client_min_hires})"
+    if s.client_min_rating > 0:
+        rating = client.get("rating", 0.0)
+        hires = client.get("hires", 0)
+        if hires > 0 and rating < s.client_min_rating:
+            return f"client rating {rating:.1f} below minimum {s.client_min_rating:.1f}"
+    if s.client_identity_verified and not client.get("identity_verified"):
+        return "client identity not verified"
+    if s.client_email_verified and not client.get("email_verified"):
+        return "client email not verified"
+    if s.client_deposit_made and not client.get("deposit_made"):
+        return "client deposit not made"
+
     text = f"{project.title}\n{project.description}".lower()
     for keyword in s.exclude_keywords:
         if keyword.strip() and keyword.strip().lower() in text:

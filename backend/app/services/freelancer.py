@@ -75,16 +75,28 @@ class FreelancerClient:
         # Plus/Premier plans support up to 80 skills. Chunk in batches of up to 40
         # to ensure the Freelancer API processes all skills and returns fresh projects across each cluster.
         chunk_size = 40
+        params = {
+            "jobs[]": skill_ids,
+            "limit": limit,
+            "full_description": "true",
+            "job_details": "true",
+            "user_details": "true",
+            "user_status": "true",
+            "user_employer_reputation": "true",
+            "user_reputation": "true",
+            "sort_field": "time_updated",
+        }
         if len(skill_ids) <= chunk_size:
-            params = {
-                "jobs[]": skill_ids,
-                "limit": limit,
-                "full_description": "true",
-                "job_details": "true",
-                "sort_field": "time_updated",
-            }
             result = await self._get("/projects/0.1/projects/active/", params)
-            return result.get("projects") or []
+            users = result.get("users") or {}
+            projects = result.get("projects") or []
+            for p in projects:
+                owner_id = p.get("owner_id")
+                if owner_id and "owner" not in p:
+                    owner = users.get(str(owner_id)) or users.get(owner_id)
+                    if owner:
+                        p["owner"] = owner
+            return projects
 
         chunks = [skill_ids[i : i + chunk_size] for i in range(0, len(skill_ids), chunk_size)]
         tasks = [
@@ -95,6 +107,10 @@ class FreelancerClient:
                     "limit": limit,
                     "full_description": "true",
                     "job_details": "true",
+                    "user_details": "true",
+                    "user_status": "true",
+                    "user_employer_reputation": "true",
+                    "user_reputation": "true",
                     "sort_field": "time_updated",
                 },
             )
@@ -105,9 +121,15 @@ class FreelancerClient:
         merged = []
         for res in responses:
             if isinstance(res, dict):
+                users = res.get("users") or {}
                 for p in res.get("projects") or []:
                     if p["id"] not in seen_ids:
                         seen_ids.add(p["id"])
+                        owner_id = p.get("owner_id")
+                        if owner_id and "owner" not in p:
+                            owner = users.get(str(owner_id)) or users.get(owner_id)
+                            if owner:
+                                p["owner"] = owner
                         merged.append(p)
         return merged
 
@@ -131,6 +153,46 @@ class FreelancerClient:
                 "description": description,
             },
         )
+
+
+def normalize_client_info(raw: dict) -> dict:
+    """Extract and normalize client (employer) qualifications and verification status."""
+    owner = raw.get("owner") or (raw.get("users") or {}).get(str(raw.get("owner_id"))) or {}
+    status = owner.get("status") or raw.get("owner_status") or {}
+    emp_rep = owner.get("employer_reputation") or owner.get("reputation") or raw.get("employer_reputation") or {}
+    history = emp_rep.get("entire_history") or {}
+
+    hires = (
+        history.get("count")
+        or history.get("reviews")
+        or history.get("all")
+        or emp_rep.get("count")
+        or emp_rep.get("reviews")
+        or emp_rep.get("all")
+        or raw.get("client_hires")
+        or 0
+    )
+    rating = (
+        history.get("overall")
+        or history.get("rating")
+        or emp_rep.get("overall")
+        or emp_rep.get("rating")
+        or raw.get("client_rating")
+        or 0.0
+    )
+    completion_rate = history.get("completion_rate") or emp_rep.get("completion_rate") or 0
+
+    return {
+        "payment_verified": bool(status.get("payment_verified") or raw.get("payment_verified")),
+        "email_verified": bool(status.get("email_verified") or raw.get("email_verified")),
+        "phone_verified": bool(status.get("phone_verified") or raw.get("phone_verified")),
+        "identity_verified": bool(status.get("identity_verified") or raw.get("identity_verified")),
+        "deposit_made": bool(status.get("deposit_made") or raw.get("deposit_made")),
+        "hires": int(hires),
+        "rating": float(rating),
+        "completion_rate": int(completion_rate),
+        "username": owner.get("username") or raw.get("owner_username") or "",
+    }
 
 
 def normalize_project(raw: dict) -> dict:
@@ -160,6 +222,7 @@ def normalize_project(raw: dict) -> dict:
             [k for k, v in (raw.get("upgrades") or {}).items() if v is True]
             + (["kyc_required"] if raw.get("is_seller_kyc_required") else [])
         ),
+        "client_info": normalize_client_info(raw),
         "submitted_at": datetime.fromtimestamp(submitted, timezone.utc) if submitted else None,
     }
 

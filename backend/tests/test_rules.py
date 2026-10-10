@@ -95,9 +95,48 @@ def test_budget_minimum_is_compared_in_usd():
     assert not result.passed and "budget $18" in result.reason
 
 
+def test_client_qualifications():
+    now = utcnow()
+    verified_client = project(client_info={"payment_verified": True, "hires": 5, "rating": 4.8, "identity_verified": True, "email_verified": True, "deposit_made": True})
+    unverified_client = project(client_info={"payment_verified": False, "hires": 0, "rating": 0.0, "identity_verified": False, "email_verified": False, "deposit_made": False})
+
+    # Payment verification check
+    pay_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_payment_verified=True)
+    assert evaluate(verified_client, pay_settings, now).passed
+    res = evaluate(unverified_client, pay_settings, now)
+    assert not res.passed and "client payment method not verified" in res.reason
+
+    # Minimum hires check
+    hires_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_min_hires=3)
+    assert evaluate(verified_client, hires_settings, now).passed
+    res = evaluate(unverified_client, hires_settings, now)
+    assert not res.passed and "client has only 0 hires" in res.reason
+
+    # Minimum rating check
+    rating_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_min_rating=4.5)
+    assert evaluate(verified_client, rating_settings, now).passed
+    low_rated = project(client_info={"hires": 2, "rating": 3.5})
+    res = evaluate(low_rated, rating_settings, now)
+    assert not res.passed and "client rating 3.5 below minimum 4.5" in res.reason
+
+    # Identity, email and deposit checks
+    id_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_identity_verified=True)
+    assert not evaluate(unverified_client, id_settings, now).passed
+    assert "client identity not verified" in evaluate(unverified_client, id_settings, now).reason
+
+    email_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_email_verified=True)
+    assert not evaluate(unverified_client, email_settings, now).passed
+    assert "client email not verified" in evaluate(unverified_client, email_settings, now).reason
+
+    deposit_settings = AppSettings(skill_ids=[759], min_skill_matches=1, client_deposit_made=True)
+    assert not evaluate(unverified_client, deposit_settings, now).passed
+    assert "client deposit not made" in evaluate(unverified_client, deposit_settings, now).reason
+
+
 def test_proposal_validation():
     s = AppSettings()
     assert proposal_problem("x" * 300, s) is None
     assert "too short" in proposal_problem("hi", s)
     assert "too long" in proposal_problem("x" * 2000, s)
     assert "placeholder" in proposal_problem("Hello [Your Name], " + "x" * 200, s)
+
