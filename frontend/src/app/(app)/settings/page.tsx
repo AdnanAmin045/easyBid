@@ -173,8 +173,165 @@ function SkillPicker({ title, hint, empty, selected, onChange, importable, block
   );
 }
 
+const POPULAR_COUNTRIES = [
+  "Algeria",
+  "Argentina",
+  "Australia",
+  "Austria",
+  "Bangladesh",
+  "Belgium",
+  "Brazil",
+  "Canada",
+  "Chile",
+  "China",
+  "Colombia",
+  "Czech Republic",
+  "Denmark",
+  "Egypt",
+  "Finland",
+  "France",
+  "Germany",
+  "Ghana",
+  "Greece",
+  "Hong Kong",
+  "India",
+  "Indonesia",
+  "Ireland",
+  "Israel",
+  "Italy",
+  "Japan",
+  "Kazakhstan",
+  "Kenya",
+  "Malaysia",
+  "Mexico",
+  "Morocco",
+  "Nepal",
+  "Netherlands",
+  "New Zealand",
+  "Nigeria",
+  "Norway",
+  "Pakistan",
+  "Peru",
+  "Philippines",
+  "Poland",
+  "Portugal",
+  "Romania",
+  "Russia",
+  "Saudi Arabia",
+  "Singapore",
+  "South Africa",
+  "South Korea",
+  "Spain",
+  "Sri Lanka",
+  "Sweden",
+  "Switzerland",
+  "Taiwan",
+  "Thailand",
+  "Tunisia",
+  "Turkey",
+  "Ukraine",
+  "United Arab Emirates",
+  "United Kingdom",
+  "United States",
+  "Uzbekistan",
+  "Vietnam",
+];
+
+interface CountryPickerProps {
+  selected: string[];
+  onChange: (countries: string[]) => void;
+}
+
+function CountryPicker({ selected, onChange }: CountryPickerProps) {
+  const [custom, setCustom] = useState("");
+
+  const add = (country: string) => {
+    const trimmed = country.trim();
+    if (!trimmed) return;
+    const exists = selected.some((c) => c.toLowerCase() === trimmed.toLowerCase());
+    if (!exists) {
+      onChange([...selected, trimmed]);
+    }
+  };
+
+  const remove = (country: string) => {
+    onChange(selected.filter((c) => c.toLowerCase() !== country.toLowerCase()));
+  };
+
+  const available = POPULAR_COUNTRIES.filter(
+    (c) => !selected.some((s) => s.toLowerCase() === c.toLowerCase())
+  );
+
+  return (
+    <div>
+      <span className="mb-1.5 block text-[13px] font-medium text-stone-700">
+        Excluded countries
+      </span>
+      <p className="mb-2 text-xs text-stone-500">
+        Jobs from these countries are filtered out (matched by employer profile location or country-specific currency).
+      </p>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {selected.length === 0 && (
+          <span className="text-xs text-stone-400">No countries excluded.</span>
+        )}
+        {selected.map((country) => (
+          <span
+            key={country}
+            className="inline-flex items-center gap-1.5 rounded-full bg-red-50 py-1 pl-3 pr-1.5 text-xs font-medium text-red-700"
+          >
+            {country}
+            <button
+              type="button"
+              aria-label={`Remove ${country}`}
+              className="rounded-full px-1 hover:bg-black/10"
+              onClick={() => remove(country)}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+        <Select
+          value=""
+          className="w-full sm:w-64"
+          onChange={(e) => {
+            if (e.target.value) {
+              add(e.target.value);
+            }
+          }}
+        >
+          <option value="">Select country to exclude…</option>
+          {available.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </Select>
+        <form
+          className="flex flex-1 gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            add(custom);
+            setCustom("");
+          }}
+        >
+          <Input
+            value={custom}
+            placeholder="Or type country name or code, e.g. India, PK"
+            onChange={(e) => setCustom(e.target.value)}
+          />
+          <Button type="submit" disabled={!custom.trim()}>
+            Add
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function SettingsForm({ initial }: { initial: Settings }) {
-  const [s, setS] = useState(initial);
+  const [s, setS] = useState({ ...initial, exclude_countries: initial.exclude_countries ?? [] });
   const [lists, setLists] = useState({
     exclude_keywords: initial.exclude_keywords.join(", "),
     currencies: initial.currencies.join(", "),
@@ -195,6 +352,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
     try {
       const body: Settings = {
         ...s,
+        exclude_countries: s.exclude_countries ?? [],
         exclude_keywords: toList(lists.exclude_keywords),
         currencies: toList(lists.currencies).map((c) => c.toUpperCase()),
         languages: toList(lists.languages).map((l) => l.toLowerCase()),
@@ -288,6 +446,12 @@ function SettingsForm({ initial }: { initial: Settings }) {
             <Field label="Excluded keywords" hint="Comma-separated. A project containing any of these is dropped.">
               <Input value={lists.exclude_keywords} onChange={(e) => setLists({ ...lists, exclude_keywords: e.target.value })} />
             </Field>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3">
+            <CountryPicker
+              selected={s.exclude_countries ?? []}
+              onChange={(exclude_countries) => update({ exclude_countries })}
+            />
           </div>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">

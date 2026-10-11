@@ -30,6 +30,120 @@ def skill_match_percent(project: Project, s: AppSettings) -> float:
     return len(matched_skills(project, s)) / len(tags) * 100 if tags else 0
 
 
+COUNTRY_LOOKUP: dict[str, tuple[str, str]] = {
+    "af": ("Afghanistan", "AF"), "afghanistan": ("Afghanistan", "AF"),
+    "al": ("Albania", "AL"), "albania": ("Albania", "AL"),
+    "dz": ("Algeria", "DZ"), "algeria": ("Algeria", "DZ"),
+    "ar": ("Argentina", "AR"), "argentina": ("Argentina", "AR"),
+    "am": ("Armenia", "AM"), "armenia": ("Armenia", "AM"),
+    "au": ("Australia", "AU"), "australia": ("Australia", "AU"),
+    "at": ("Austria", "AT"), "austria": ("Austria", "AT"),
+    "az": ("Azerbaijan", "AZ"), "azerbaijan": ("Azerbaijan", "AZ"),
+    "bh": ("Bahrain", "BH"), "bahrain": ("Bahrain", "BH"),
+    "bd": ("Bangladesh", "BD"), "bangladesh": ("Bangladesh", "BD"),
+    "by": ("Belarus", "BY"), "belarus": ("Belarus", "BY"),
+    "be": ("Belgium", "BE"), "belgium": ("Belgium", "BE"),
+    "br": ("Brazil", "BR"), "brazil": ("Brazil", "BR"),
+    "bg": ("Bulgaria", "BG"), "bulgaria": ("Bulgaria", "BG"),
+    "ca": ("Canada", "CA"), "canada": ("Canada", "CA"),
+    "cl": ("Chile", "CL"), "chile": ("Chile", "CL"),
+    "cn": ("China", "CN"), "china": ("China", "CN"),
+    "co": ("Colombia", "CO"), "colombia": ("Colombia", "CO"),
+    "hr": ("Croatia", "HR"), "croatia": ("Croatia", "HR"),
+    "cy": ("Cyprus", "CY"), "cyprus": ("Cyprus", "CY"),
+    "cz": ("Czech Republic", "CZ"), "czechia": ("Czech Republic", "CZ"), "czech republic": ("Czech Republic", "CZ"),
+    "dk": ("Denmark", "DK"), "denmark": ("Denmark", "DK"),
+    "eg": ("Egypt", "EG"), "egypt": ("Egypt", "EG"),
+    "ee": ("Estonia", "EE"), "estonia": ("Estonia", "EE"),
+    "fi": ("Finland", "FI"), "finland": ("Finland", "FI"),
+    "fr": ("France", "FR"), "france": ("France", "FR"),
+    "ge": ("Georgia", "GE"), "georgia": ("Georgia", "GE"),
+    "de": ("Germany", "DE"), "germany": ("Germany", "DE"),
+    "gh": ("Ghana", "GH"), "ghana": ("Ghana", "GH"),
+    "gr": ("Greece", "GR"), "greece": ("Greece", "GR"),
+    "hk": ("Hong Kong", "HK"), "hong kong": ("Hong Kong", "HK"),
+    "hu": ("Hungary", "HU"), "hungary": ("Hungary", "HU"),
+    "in": ("India", "IN"), "india": ("India", "IN"),
+    "id": ("Indonesia", "ID"), "indonesia": ("Indonesia", "ID"),
+    "ir": ("Iran", "IR"), "iran": ("Iran", "IR"),
+    "iq": ("Iraq", "IQ"), "iraq": ("Iraq", "IQ"),
+    "ie": ("Ireland", "IE"), "ireland": ("Ireland", "IE"),
+    "il": ("Israel", "IL"), "israel": ("Israel", "IL"),
+    "it": ("Italy", "IT"), "italy": ("Italy", "IT"),
+    "jp": ("Japan", "JP"), "japan": ("Japan", "JP"),
+    "jo": ("Jordan", "JO"), "jordan": ("Jordan", "JO"),
+    "kz": ("Kazakhstan", "KZ"), "kazakhstan": ("Kazakhstan", "KZ"),
+    "ke": ("Kenya", "KE"), "kenya": ("Kenya", "KE"),
+    "kw": ("Kuwait", "KW"), "kuwait": ("Kuwait", "KW"),
+    "lb": ("Lebanon", "LB"), "lebanon": ("Lebanon", "LB"),
+    "my": ("Malaysia", "MY"), "malaysia": ("Malaysia", "MY"),
+    "mx": ("Mexico", "MX"), "mexico": ("Mexico", "MX"),
+    "ma": ("Morocco", "MA"), "morocco": ("Morocco", "MA"),
+    "np": ("Nepal", "NP"), "nepal": ("Nepal", "NP"),
+    "nl": ("Netherlands", "NL"), "netherlands": ("Netherlands", "NL"),
+    "nz": ("New Zealand", "NZ"), "new zealand": ("New Zealand", "NZ"),
+    "ng": ("Nigeria", "NG"), "nigeria": ("Nigeria", "NG"),
+    "no": ("Norway", "NO"), "norway": ("Norway", "NO"),
+    "om": ("Oman", "OM"), "oman": ("Oman", "OM"),
+    "pk": ("Pakistan", "PK"), "pakistan": ("Pakistan", "PK"),
+    "ps": ("Palestine", "PS"), "palestine": ("Palestine", "PS"),
+    "ph": ("Philippines", "PH"), "philippines": ("Philippines", "PH"),
+    "pl": ("Poland", "PL"), "poland": ("Poland", "PL"),
+    "pt": ("Portugal", "PT"), "portugal": ("Portugal", "PT"),
+    "qa": ("Qatar", "QA"), "qatar": ("Qatar", "QA"),
+    "ro": ("Romania", "RO"), "romania": ("Romania", "RO"),
+    "ru": ("Russia", "RU"), "russia": ("Russia", "RU"),
+    "sa": ("Saudi Arabia", "SA"), "saudi arabia": ("Saudi Arabia", "SA"),
+    "rs": ("Serbia", "RS"), "serbia": ("Serbia", "RS"),
+    "sg": ("Singapore", "SG"), "singapore": ("Singapore", "SG"),
+    "za": ("South Africa", "ZA"), "south africa": ("South Africa", "ZA"),
+    "kr": ("South Korea", "KR"), "south korea": ("South Korea", "KR"), "korea": ("South Korea", "KR"),
+    "es": ("Spain", "ES"), "spain": ("Spain", "ES"),
+    "lk": ("Sri Lanka", "LK"), "sri lanka": ("Sri Lanka", "LK"),
+    "se": ("Sweden", "SE"), "sweden": ("Sweden", "SE"),
+    "ch": ("Switzerland", "CH"), "switzerland": ("Switzerland", "CH"),
+    "tw": ("Taiwan", "TW"), "taiwan": ("Taiwan", "TW"),
+    "th": ("Thailand", "TH"), "thailand": ("Thailand", "TH"),
+    "tn": ("Tunisia", "TN"), "tunisia": ("Tunisia", "TN"),
+    "tr": ("Turkey", "TR"), "turkey": ("Turkey", "TR"), "turkiye": ("Turkey", "TR"),
+    "ua": ("Ukraine", "UA"), "ukraine": ("Ukraine", "UA"),
+    "ae": ("United Arab Emirates", "AE"), "united arab emirates": ("United Arab Emirates", "AE"), "uae": ("United Arab Emirates", "AE"),
+    "gb": ("United Kingdom", "GB"), "united kingdom": ("United Kingdom", "GB"), "uk": ("United Kingdom", "GB"),
+    "us": ("United States", "US"), "united states": ("United States", "US"), "usa": ("United States", "US"),
+    "ve": ("Venezuela", "VE"), "venezuela": ("Venezuela", "VE"),
+    "vn": ("Vietnam", "VN"), "vietnam": ("Vietnam", "VN"),
+}
+
+
+def normalize_country(val: str) -> tuple[str, str]:
+    cleaned = (val or "").strip().lower()
+    if cleaned in COUNTRY_LOOKUP:
+        return COUNTRY_LOOKUP[cleaned]
+    return (val.strip(), val.strip().upper() if len(val.strip()) == 2 else "")
+
+
+def matches_excluded_country(p_country: str, p_code: str, exclude_list: list[str]) -> str | None:
+    """Return the matched country name if project matches any excluded country, or None."""
+    p_name_norm, p_code_norm = normalize_country(p_country)
+    p_codes = {c.lower() for c in (p_code, p_code_norm) if c}
+    p_names = {n.lower() for n in (p_country, p_name_norm) if n}
+
+    for excluded in exclude_list:
+        ex = excluded.strip()
+        if not ex:
+            continue
+        ex_name, ex_code = normalize_country(ex)
+        ex_lower = ex.lower()
+        if (
+            (ex_code and ex_code.lower() in p_codes)
+            or (ex_name and ex_name.lower() in p_names)
+            or ex_lower in p_codes
+            or ex_lower in p_names
+        ):
+            return ex_name or p_name_norm or p_country or ex
+    return None
+
+
 def check_rules(project: Project, s: AppSettings, now: datetime) -> str | None:
     """Return why the project is rejected, or None if it passes every hard rule."""
     blocked = set(s.blocked_skill_ids)
@@ -69,6 +183,21 @@ def check_rules(project: Project, s: AppSettings, now: datetime) -> str | None:
     blocked = [u for u in project.upgrades if u in s.skip_upgrades]
     if blocked:
         return f"upgrade not allowed: {', '.join(blocked)}"
+
+    # Country exclusions
+    if s.exclude_countries:
+        client = getattr(project, "client_info", None) or {}
+        p_country = (client.get("country") or "").strip()
+        p_code = (client.get("country_code") or "").strip()
+        if not p_country and not p_code and project.currency:
+            from app.services.freelancer import CURRENCY_COUNTRY_MAP
+            if project.currency in CURRENCY_COUNTRY_MAP:
+                p_country, p_code = CURRENCY_COUNTRY_MAP[project.currency]
+
+        if p_country or p_code:
+            match = matches_excluded_country(p_country, p_code, s.exclude_countries)
+            if match:
+                return f"excluded country: {match}"
 
     # Client qualifications
     client = getattr(project, "client_info", None) or {}

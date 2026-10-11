@@ -74,6 +74,11 @@ export default function ProjectsPage() {
                 <span>{budgetLabel(project)}</span>
                 <span>{project.bid_count} bids</span>
                 <span>posted {timeAgo(project.submitted_at)}</span>
+                {project.client_info?.country ? (
+                  <span className="inline-flex items-center gap-1 font-medium text-stone-700">
+                    <span className="text-[11px]">🌍</span> {project.client_info.country}
+                  </span>
+                ) : null}
                 {project.client_info?.payment_verified ? (
                   <span className="inline-flex items-center gap-0.5 font-medium text-emerald-700">
                     <span className="text-[11px]">✓</span> Payment verified

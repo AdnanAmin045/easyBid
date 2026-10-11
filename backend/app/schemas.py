@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PromptKind = Literal["selection", "proposal"]
 Mode = Literal["manual", "semi", "auto"]
@@ -33,6 +33,7 @@ class AppSettings(BaseModel):
     project_types: list[Literal["fixed", "hourly"]] = ["fixed", "hourly"]
     currencies: list[str] = []  # empty = any
     languages: list[str] = ["en"]  # empty = any
+    exclude_countries: list[str] = []  # empty = any
     min_fixed_budget: float = Field(50, ge=0)
     min_hourly_rate: float = Field(10, ge=0)
     max_bid_count: int = Field(40, ge=0)
@@ -40,6 +41,14 @@ class AppSettings(BaseModel):
     min_score: int = Field(0, ge=0, le=100)
     exclude_keywords: list[str] = []
     skip_upgrades: list[str] = ["NDA"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_country_alias(cls, values):
+        if isinstance(values, dict):
+            if "excluded_countries" in values and "exclude_countries" not in values:
+                values["exclude_countries"] = values["excluded_countries"]
+        return values
 
     # Client qualifications (Freelancer.com employer verification & track record)
     client_payment_verified: bool = False

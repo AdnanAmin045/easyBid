@@ -84,6 +84,10 @@ class FreelancerClient:
             "user_status": "true",
             "user_employer_reputation": "true",
             "user_reputation": "true",
+            "user_location": "true",
+            "user_country": "true",
+            "country_details": "true",
+            "location_details": "true",
             "sort_field": "time_updated",
         }
         if len(skill_ids) <= chunk_size:
@@ -111,6 +115,10 @@ class FreelancerClient:
                     "user_status": "true",
                     "user_employer_reputation": "true",
                     "user_reputation": "true",
+                    "user_location": "true",
+                    "user_country": "true",
+                    "country_details": "true",
+                    "location_details": "true",
                     "sort_field": "time_updated",
                 },
             )
@@ -155,6 +163,42 @@ class FreelancerClient:
         )
 
 
+# Map single-country currencies to default country names and ISO alpha-2 codes
+# used as a fallback when Freelancer API does not include the employer's location.
+CURRENCY_COUNTRY_MAP: dict[str, tuple[str, str]] = {
+    "INR": ("India", "IN"),
+    "PKR": ("Pakistan", "PK"),
+    "BDT": ("Bangladesh", "BD"),
+    "NGN": ("Nigeria", "NG"),
+    "PHP": ("Philippines", "PH"),
+    "IDR": ("Indonesia", "ID"),
+    "BRL": ("Brazil", "BR"),
+    "VND": ("Vietnam", "VN"),
+    "EGP": ("Egypt", "EG"),
+    "RUB": ("Russia", "RU"),
+    "UAH": ("Ukraine", "UA"),
+    "TRY": ("Turkey", "TR"),
+    "KES": ("Kenya", "KE"),
+    "ZAR": ("South Africa", "ZA"),
+    "MYR": ("Malaysia", "MY"),
+    "THB": ("Thailand", "TH"),
+    "PLN": ("Poland", "PL"),
+    "ILS": ("Israel", "IL"),
+    "AED": ("United Arab Emirates", "AE"),
+    "SAR": ("Saudi Arabia", "SA"),
+    "QAR": ("Qatar", "QA"),
+    "KWD": ("Kuwait", "KW"),
+    "SGD": ("Singapore", "SG"),
+    "HKD": ("Hong Kong", "HK"),
+    "NZD": ("New Zealand", "NZ"),
+    "CAD": ("Canada", "CA"),
+    "AUD": ("Australia", "AU"),
+    "GBP": ("United Kingdom", "GB"),
+    "JPY": ("Japan", "JP"),
+    "CNY": ("China", "CN"),
+}
+
+
 def normalize_client_info(raw: dict) -> dict:
     """Extract and normalize client (employer) qualifications and verification status."""
     owner = raw.get("owner") or (raw.get("users") or {}).get(str(raw.get("owner_id"))) or {}
@@ -182,6 +226,38 @@ def normalize_client_info(raw: dict) -> dict:
     )
     completion_rate = history.get("completion_rate") or emp_rep.get("completion_rate") or 0
 
+    # Extract country from owner location, project location, or existing client_info
+    loc = owner.get("location") or raw.get("location") or raw.get("true_location") or {}
+    country_obj = loc.get("country") if isinstance(loc, dict) else None
+    if not country_obj:
+        country_obj = owner.get("country") or raw.get("country") or raw.get("client_country")
+
+    country_name = ""
+    country_code = ""
+    if isinstance(country_obj, dict):
+        country_name = str(country_obj.get("name") or "").strip()
+        country_code = str(country_obj.get("code") or country_obj.get("iso3") or "").strip()
+    elif isinstance(country_obj, str) and country_obj.strip():
+        country_name = country_obj.strip()
+
+    if isinstance(raw.get("client_info"), dict):
+        ci = raw["client_info"]
+        if not country_name and ci.get("country"):
+            country_name = str(ci.get("country")).strip()
+        if not country_code and ci.get("country_code"):
+            country_code = str(ci.get("country_code")).strip()
+
+    # Fallback to currency-based country if API location is absent
+    currency_val = raw.get("currency")
+    curr_code = ""
+    if isinstance(currency_val, dict):
+        curr_code = str(currency_val.get("code") or "").upper()
+    elif isinstance(currency_val, str):
+        curr_code = currency_val.strip().upper()
+
+    if not country_name and not country_code and curr_code in CURRENCY_COUNTRY_MAP:
+        country_name, country_code = CURRENCY_COUNTRY_MAP[curr_code]
+
     return {
         "payment_verified": bool(status.get("payment_verified") or raw.get("payment_verified")),
         "email_verified": bool(status.get("email_verified") or raw.get("email_verified")),
@@ -192,6 +268,8 @@ def normalize_client_info(raw: dict) -> dict:
         "rating": float(rating),
         "completion_rate": int(completion_rate),
         "username": owner.get("username") or raw.get("owner_username") or "",
+        "country": country_name,
+        "country_code": country_code,
     }
 
 

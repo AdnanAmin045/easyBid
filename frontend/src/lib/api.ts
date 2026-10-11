@@ -111,6 +111,7 @@ export interface Settings {
   max_age_minutes: number;
   min_score: number;
   exclude_keywords: string[];
+  exclude_countries: string[];
   skip_upgrades: string[];
   client_payment_verified: boolean;
   client_min_hires: number;
@@ -158,6 +159,8 @@ export interface ClientInfo {
   rating?: number;
   completion_rate?: number;
   username?: string;
+  country?: string;
+  country_code?: string;
 }
 
 export interface Project {

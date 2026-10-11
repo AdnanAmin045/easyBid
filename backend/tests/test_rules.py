@@ -140,3 +140,42 @@ def test_proposal_validation():
     assert "too long" in proposal_problem("x" * 2000, s)
     assert "placeholder" in proposal_problem("Hello [Your Name], " + "x" * 200, s)
 
+
+def test_excluded_countries():
+    now = utcnow()
+    # 1. Project with client_info country
+    india_client = project(client_info={"country": "India", "country_code": "IN"})
+    s = AppSettings(skill_ids=[759], min_skill_matches=1, exclude_countries=["India"])
+    res = evaluate(india_client, s, now)
+    assert not res.passed
+    assert "excluded country: India" in res.reason
+
+    # 2. Exclude by country code (case-insensitive)
+    s_code = AppSettings(skill_ids=[759], min_skill_matches=1, exclude_countries=["in"])
+    res_code = evaluate(india_client, s_code, now)
+    assert not res_code.passed
+    assert "excluded country: India" in res_code.reason
+
+    # 3. Currency-based fallback when client_info country is not set
+    inr_project = project(currency="INR", client_info={})
+    res_inr = evaluate(inr_project, s, now)
+    assert not res_inr.passed
+    assert "excluded country: India" in res_inr.reason
+
+    # 4. Other country passes
+    us_client = project(currency="USD", client_info={"country": "United States", "country_code": "US"})
+    res_us = evaluate(us_client, s, now)
+    assert res_us.passed
+
+    # 5. Excluding multiple countries
+    multi_s = AppSettings(skill_ids=[759], min_skill_matches=1, exclude_countries=["India", "Pakistan", "Bangladesh"])
+    pk_client = project(currency="PKR", client_info={"country": "Pakistan", "country_code": "PK"})
+    res_pk = evaluate(pk_client, multi_s, now)
+    assert not res_pk.passed
+    assert "excluded country: Pakistan" in res_pk.reason
+
+    # 6. Empty exclude_countries allows everything
+    empty_s = AppSettings(skill_ids=[759], min_skill_matches=1, exclude_countries=[])
+    assert evaluate(india_client, empty_s, now).passed
+
+
