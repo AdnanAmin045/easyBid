@@ -37,7 +37,7 @@ export default function LoginPage() {
     <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <section className="grid-texture relative hidden flex-col justify-between overflow-hidden bg-graphite-900 p-12 text-graphite-300 lg:flex">
         <div className="flex items-center gap-2.5">
-          <span className="grid h-8 w-8 place-items-center rounded-[5px] bg-brand-500 text-graphite-950">
+          <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-gradient-to-br from-brand-400 to-brand-600 text-white shadow-[0_4px_14px_-4px_rgb(242_106_42/0.6)]">
             <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="square" aria-hidden="true">
               <path d="M2 4h12M2 8h8M2 12h12" />
             </svg>

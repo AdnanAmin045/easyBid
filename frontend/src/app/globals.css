@@ -28,6 +28,8 @@
   --color-graphite-500: #5b6170;
   --color-graphite-400: #8a90a0;
   --color-graphite-300: #b7bcc8;
+
+  --shadow-card: 0 1px 2px rgb(16 20 40 / 0.04), 0 6px 18px -10px rgb(16 20 40 / 0.1);
 }
 
 body {
