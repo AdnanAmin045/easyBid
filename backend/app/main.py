@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import public, router
 from app.jobs import api as jobs_api
 from app.jobs.gmail import GmailClient
+from app.outreach import api as outreach_api
+from app.outreach import engine as outreach_engine
 from app.config import get_env
 from app.db import SessionLocal
 from app.services.freelancer import FreelancerClient
@@ -21,6 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("easybid")
 
 TICK_SECONDS = 15
+OUTREACH_TICK_SECONDS = 10
 KEEPALIVE_SECONDS = 300
 
 
@@ -47,6 +50,16 @@ async def scheduler_loop(sv: Services, standby: bool) -> None:
         except Exception:
             logger.exception("Scheduler tick failed")
         await asyncio.sleep(TICK_SECONDS)
+
+
+async def outreach_loop(js: jobs_api.JobServices) -> None:
+    """Sends campaign emails. Safe next to another instance: every claim is a compare-and-set in the database."""
+    while True:
+        try:
+            await outreach_engine.tick(js)
+        except Exception:
+            logger.exception("Outreach tick failed")
+        await asyncio.sleep(OUTREACH_TICK_SECONDS)
 
 
 async def keepalive_loop(url: str) -> None:
@@ -76,10 +89,12 @@ async def lifespan(app: FastAPI):
         sessions=SessionLocal,
         llm=app.state.services.llm,
         gmail=GmailClient(env.google_client_id, env.google_client_secret, env.google_redirect_uri),
+        notifier=app.state.services.notifier,
     )
     app.state.skill_cache = []
     # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
     tasks = [asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))]
+    tasks.append(asyncio.create_task(outreach_loop(app.state.jobs)))
     if env.render_external_url:
         tasks.append(asyncio.create_task(keepalive_loop(env.render_external_url)))
     yield
@@ -100,3 +115,4 @@ app.include_router(public)
 app.include_router(router)
 app.include_router(jobs_api.public)
 app.include_router(jobs_api.router)
+app.include_router(outreach_api.router)
