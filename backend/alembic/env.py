@@ -4,6 +4,7 @@ from alembic import context
 
 from app.db import engine
 from app.jobs import models as _jobs_models  # noqa: F401  (registers the Jobs tables)
+from app.outreach import models as _outreach_models  # noqa: F401  (registers the Outreach tables)
 from app.models import Base
 
 target_metadata = Base.metadata
