@@ -27,9 +27,11 @@ STATE_TTL = timedelta(minutes=10)
 
 
 class GmailError(Exception):
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: int | None = None, outcome_unknown: bool = False):
         super().__init__(message)
         self.status_code = status_code
+        # True when the request may have reached Gmail, so sending again could deliver the email twice.
+        self.outcome_unknown = outcome_unknown
 
 
 @dataclass
@@ -187,8 +189,23 @@ class GmailClient:
             res = await self._http.post(f"{API}/messages/send", headers={"Authorization": f"Bearer {token}"}, json={"raw": raw})
         except httpx.HTTPError as e:
             # The request may or may not have reached Gmail; never retry blindly.
-            raise GmailError(f"Outcome unknown, check Gmail's Sent folder before retrying: {e!r}") from e
+            raise GmailError(f"Outcome unknown, check Gmail's Sent folder before retrying: {e!r}", outcome_unknown=True) from e
         return await self._json(res)
+
+    async def thread(self, refresh_token: str, thread_id: str) -> list[dict]:
+        """The messages of a thread with their From and Auto-Submitted headers only; [] when it was deleted."""
+        token = await self.access_token(refresh_token)
+        try:
+            res = await self._http.get(
+                f"{API}/threads/{thread_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=[("format", "metadata"), ("metadataHeaders", "From"), ("metadataHeaders", "Auto-Submitted")],
+            )
+        except httpx.HTTPError as e:
+            raise GmailError(f"Could not reach Google: {e!r}") from e
+        if res.status_code == 404:
+            return []
+        return (await self._json(res)).get("messages", [])
 
     async def revoke(self, refresh_token: str) -> None:
         try:

@@ -22,6 +22,7 @@ from app.models import utcnow
 from app.pagination import Page, PageParams, contains, paginate
 from app.security import require_user
 from app.services import store
+from app.services.notifier import Notifier
 from app.services.llm import LLM, LLMError
 
 SETTINGS_KEY = "jobs_settings"
@@ -42,6 +43,11 @@ class JobServices:
     llm: LLM
     gmail: GmailClient
     lookup: extraction.MailServerLookup = extraction.has_mail_server
+    notifier: Notifier | None = None
+
+    async def notify(self, text: str) -> None:
+        if self.notifier:
+            await self.notifier.send(text)
 
 
 def job_services(request: Request) -> JobServices:
