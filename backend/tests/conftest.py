@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db import build_test_engine
 from app.jobs import models as _jobs_models  # noqa: F401  (registers the Jobs tables)
+from app.outreach import models as _outreach_models  # noqa: F401  (registers the Outreach tables)
 from app.models import Base, utcnow
 from app.schemas import AppSettings
 from app.services import store
