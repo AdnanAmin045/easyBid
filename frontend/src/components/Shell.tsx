@@ -39,27 +39,44 @@ const MODULES: { key: string; label: string; tag: string; items: NavItem[] }[] =
       { href: "/jobs/settings", label: "Settings" },
     ],
   },
+  {
+    key: "outreach",
+    label: "Outreach",
+    tag: "OT",
+    items: [
+      { href: "/outreach", label: "Overview" },
+      { href: "/outreach/campaigns/new", label: "New campaign" },
+      { href: "/outreach/campaigns", label: "Campaigns" },
+      { href: "/outreach/templates", label: "Templates" },
+      { href: "/outreach/suppressions", label: "Do not contact" },
+      { href: "/outreach/settings", label: "Settings" },
+    ],
+  },
   { key: "system", label: "System", tag: "SY", items: [{ href: "/logs", label: "Activity log" }] },
 ];
 
 const FREELANCE_ROOTS = ["/queue", "/projects", "/bids", "/prompts", "/profile", "/settings"];
 
 function isActive(href: string, pathname: string): boolean {
-  if (href === "/" || href === "/jobs") return pathname === href;
+  if (href === "/" || href === "/jobs" || href === "/outreach") return pathname === href;
+  // "New campaign" lives under /outreach/campaigns, so the list must not light up for it.
+  if (href === "/outreach/campaigns") return pathname === href || (pathname.startsWith(`${href}/`) && !pathname.startsWith(`${href}/new`));
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function currentModule(pathname: string) {
-  if (pathname.startsWith("/jobs")) return MODULES[1];
-  if (pathname === "/" || FREELANCE_ROOTS.some((root) => pathname.startsWith(root))) return MODULES[0];
-  return MODULES[2];
+  const byKey = (key: string) => MODULES.find((m) => m.key === key)!;
+  if (pathname.startsWith("/jobs")) return byKey("jobs");
+  if (pathname.startsWith("/outreach")) return byKey("outreach");
+  if (pathname === "/" || FREELANCE_ROOTS.some((root) => pathname.startsWith(root))) return byKey("freelance");
+  return byKey("system");
 }
 
 const noopSubscribe = () => () => {};
 
 function Mark() {
   return (
-    <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-[5px] bg-brand-500 text-graphite-950">
+    <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-[10px] bg-gradient-to-br from-brand-400 to-brand-600 text-white shadow-[0_4px_14px_-4px_rgb(242_106_42/0.6)]">
       <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="square">
         <path d="M2 4h12M2 8h8M2 12h12" />
       </svg>
@@ -109,7 +126,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           {MODULES.map((group) => (
             <div key={group.key} className="shrink-0">
               <div className="mb-1.5 flex items-center gap-2 px-2 font-mono text-[10px] uppercase tracking-[0.16em] text-graphite-500">
-                <span className="rounded-[3px] border border-graphite-700 px-1 py-px text-[9px] text-graphite-400">{group.tag}</span>
+                <span className="rounded-[4px] border border-graphite-700 px-1 py-px text-[9px] text-graphite-400">{group.tag}</span>
                 {group.label}
               </div>
               <ul className="flex gap-0.5 md:flex-col">
@@ -120,7 +137,7 @@ export default function Shell({ children }: { children: ReactNode }) {
                       <Link
                         href={item.href}
                         aria-current={active ? "page" : undefined}
-                        className={`relative block whitespace-nowrap rounded-[5px] px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
+                        className={`relative block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
                           active ? "bg-graphite-800 text-white" : "text-graphite-300 hover:bg-graphite-800/60 hover:text-white"
                         }`}
                       >
@@ -139,7 +156,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => signOut(router)}
-            className="w-full rounded-[5px] px-2.5 py-1.5 text-left text-[13px] font-medium text-graphite-400 hover:bg-graphite-800/60 hover:text-white"
+            className="w-full rounded-[8px] px-2.5 py-1.5 text-left text-[13px] font-medium text-graphite-400 hover:bg-graphite-800/60 hover:text-white"
           >
             Sign out
           </button>
@@ -147,7 +164,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-stone-300/70 bg-canvas/90 px-4 backdrop-blur md:px-8">
+        <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-stone-200 bg-canvas/80 px-4 backdrop-blur md:px-8">
           <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-stone-500">
             <span>{section.label}</span>
             {page && (

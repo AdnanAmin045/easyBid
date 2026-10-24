@@ -1,14 +1,14 @@
 "use client";
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentProps, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 
 const control =
-  "w-full rounded-[6px] border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 shadow-[inset_0_1px_0_rgb(0_0_0/0.02)] outline-none transition placeholder:text-stone-400 focus:border-brand-500 focus:ring-3 focus:ring-brand-100 disabled:bg-stone-100 disabled:text-stone-500";
+  "w-full rounded-[10px] border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 hover:border-stone-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 disabled:bg-stone-100 disabled:text-stone-500";
 
 const variants = {
-  primary: "bg-brand-600 text-white shadow-[0_1px_0_rgb(0_0_0/0.15)] hover:bg-brand-700",
-  secondary: "border border-stone-300 bg-white text-stone-800 hover:border-stone-400 hover:bg-stone-50",
-  dark: "bg-graphite-900 text-white hover:bg-graphite-800",
+  primary: "bg-brand-600 text-white shadow-[0_1px_2px_rgb(79_70_229/0.4),inset_0_1px_0_rgb(255_255_255/0.15)] hover:bg-brand-700",
+  secondary: "border border-stone-300 bg-white text-stone-800 shadow-[0_1px_2px_rgb(16_20_40/0.04)] hover:border-stone-400 hover:bg-stone-50",
+  dark: "bg-graphite-800 text-white hover:bg-graphite-700",
   danger: "border border-red-200 bg-white text-red-700 hover:bg-red-50",
 };
 
@@ -46,7 +46,7 @@ export function Button({
       {...props}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={`inline-flex items-center justify-center gap-2 rounded-[6px] px-3 py-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-[10px] px-3.5 py-2 text-sm font-medium transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
     >
       {loading && <Spinner />}
       {children}
@@ -58,7 +58,7 @@ export const Input = (props: InputHTMLAttributes<HTMLInputElement>) => (
   <input {...props} className={`${control} ${props.className ?? ""}`} />
 );
 
-export const Textarea = (props: TextareaHTMLAttributes<HTMLTextAreaElement>) => (
+export const Textarea = (props: ComponentProps<"textarea">) => (
   <textarea {...props} className={`${control} leading-relaxed ${props.className ?? ""}`} />
 );
 
@@ -78,10 +78,10 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 
 export function Card({ title, action, children, className = "" }: { title?: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-[8px] border border-stone-300/70 bg-white p-5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] ${className}`}>
+    <section className={`rounded-[14px] border border-stone-200 bg-white p-5 shadow-card ${className}`}>
       {(title || action) && (
         <div className="mb-4 flex items-center justify-between gap-3 border-b border-stone-200 pb-3">
-          <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-stone-600">{title}</h2>
+          <h2 className="text-[13px] font-semibold tracking-[-0.005em] text-stone-900">{title}</h2>
           {action}
         </div>
       )}
@@ -102,6 +102,12 @@ const tones: Record<string, string> = {
 const statusTone: Record<string, string> = {
   sent: "green",
   awarded: "green",
+  running: "green",
+  completed: "blue",
+  replied: "brand",
+  bounced: "red",
+  paused: "amber",
+  cancelled: "gray",
   active: "blue",
   proposed: "blue",
   pending: "amber",
@@ -120,7 +126,7 @@ const statusTone: Record<string, string> = {
 export function Badge({ children, tone }: { children: string; tone?: keyof typeof tones }) {
   const color = tones[tone ?? statusTone[children] ?? "gray"];
   return (
-    <span className={`inline-block rounded-[4px] px-1.5 py-0.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] ring-1 ring-inset ${color}`}>
+    <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize tracking-[0.01em] ring-1 ring-inset ${color}`}>
       {children}
     </span>
   );
@@ -130,7 +136,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.02em] text-stone-900">{title}</h1>
+        <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.025em] text-stone-900">{title}</h1>
         {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-stone-500">{subtitle}</p>}
       </div>
       {action}
@@ -141,22 +147,22 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
 export function Notice({ tone = "red", children }: { tone?: "red" | "amber" | "green"; children: ReactNode }) {
   if (!children) return null;
   return (
-    <div role={tone === "red" ? "alert" : "status"} className={`mb-4 rounded-[6px] px-3 py-2 text-sm ring-1 ring-inset ${tones[tone]}`}>
+    <div role={tone === "red" ? "alert" : "status"} className={`mb-4 rounded-[10px] px-3.5 py-2.5 text-sm ring-1 ring-inset ${tones[tone]}`}>
       {children}
     </div>
   );
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="rounded-[8px] border border-dashed border-stone-300 bg-white/50 p-10 text-center text-sm text-stone-500">{children}</p>;
+  return <p className="rounded-[14px] border border-dashed border-stone-300 bg-white/50 p-10 text-center text-sm text-stone-500">{children}</p>;
 }
 
 /** A number with its label, the building block of every overview. */
 export function Stat({ label, value, hint, accent = false }: { label: string; value: ReactNode; hint?: ReactNode; accent?: boolean }) {
   return (
-    <div className={`relative overflow-hidden rounded-[8px] border bg-white p-4 ${accent ? "border-brand-300" : "border-stone-300/70"}`}>
-      {accent && <span aria-hidden="true" className="absolute inset-x-0 top-0 h-0.5 bg-brand-500" />}
-      <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-stone-500">{label}</div>
+    <div className={`relative overflow-hidden rounded-[14px] border bg-white p-4 shadow-card ${accent ? "border-brand-300" : "border-stone-200"}`}>
+      {accent && <span aria-hidden="true" className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-brand-500 to-brand-300" />}
+      <div className="text-xs font-medium text-stone-500">{label}</div>
       <div className="tabular mt-2 text-[28px] font-semibold leading-none tracking-[-0.02em] text-stone-900">{value}</div>
       {hint && <div className="mt-2 text-xs text-stone-500">{hint}</div>}
     </div>

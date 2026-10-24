@@ -465,3 +465,134 @@ export function fileSize(bytes: number): string {
 export function gmailThreadUrl(threadId: string): string {
   return `https://mail.google.com/mail/u/0/#all/${threadId}`;
 }
+
+// --- Outreach service -------------------------------------------------------------
+
+export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
+export type RecipientStatus = "pending" | "sending" | "sent" | "replied" | "bounced" | "failed" | "skipped";
+
+export interface CampaignInput {
+  name: string;
+  mode: "template" | "ai";
+  subject_template: string;
+  body_template: string;
+  ai_brief: string;
+  footer: string;
+  append_signature: boolean;
+  resume_id: number | null;
+  min_delay_seconds: number;
+  max_delay_seconds: number;
+  daily_limit: number;
+  window_start_hour: number;
+  window_end_hour: number;
+  timezone: string;
+  weekdays_only: boolean;
+  ramp_up: boolean;
+}
+
+export interface CampaignListItem {
+  id: number;
+  name: string;
+  status: CampaignStatus;
+  pause_reason: string;
+  mode: "template" | "ai";
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  counts: Partial<Record<RecipientStatus, number>>;
+}
+
+export interface Campaign extends CampaignListItem, CampaignInput {
+  resume: Resume | null;
+  next_send_at: string | null;
+  sent_24h: number;
+  waiting: string | null;
+  columns: string[];
+}
+
+export interface OutreachRecipient {
+  id: number;
+  email: string;
+  name: string;
+  company: string;
+  fields: Record<string, string>;
+  subject: string;
+  body: string;
+  status: RecipientStatus;
+  attempts: number;
+  error: string | null;
+  sent_at: string | null;
+  gmail_thread_id: string | null;
+  created_at: string;
+}
+
+export interface ImportResult {
+  added: number;
+  held_back: number;
+  rejected: { line: number; value: string; reason: string }[];
+  rejected_total: number;
+  with_own_content: number;
+  columns: string[];
+}
+
+export interface CampaignCheck {
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  pending: number;
+  with_missing: number;
+  missing_examples: { id: number; email: string; missing: string[] }[];
+  estimated_days: number;
+}
+
+export interface EmailPreview {
+  recipient_id: number;
+  email: string;
+  subject: string;
+  body: string;
+  missing: string[];
+  own_content: boolean;
+}
+
+export interface OutreachTemplate {
+  id: number;
+  name: string;
+  subject: string;
+  body: string;
+  updated_at: string;
+}
+
+export interface OutreachSettings {
+  daily_limit: number;
+  min_gap_seconds: number;
+  skip_recent_days: number;
+  bounce_pause_percent: number;
+  model: string;
+}
+
+export interface Suppression {
+  id: number;
+  email: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface OutreachOverview {
+  gmail: { configured: boolean; connected: boolean; email: string | null };
+  ai_problem: string | null;
+  sent_24h: number;
+  daily_limit: number;
+  campaigns: Partial<Record<CampaignStatus, number>>;
+  recipients: Partial<Record<RecipientStatus, number>>;
+  suppressed: number;
+  recent: CampaignListItem[];
+}
+
+/** Total of the recipients that already had an email delivered. */
+export function deliveredCount(counts: Partial<Record<RecipientStatus, number>>): number {
+  return (counts.sent ?? 0) + (counts.replied ?? 0) + (counts.bounced ?? 0);
+}
+
+export function totalCount(counts: Partial<Record<RecipientStatus, number>>): number {
+  return Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0);
+}
