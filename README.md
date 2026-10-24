@@ -4,10 +4,12 @@ One console for two ways of finding work, each run as its own service:
 
 - **Freelance**: watches Freelancer.com for new projects, decides which ones are worth a bid, writes the proposal with AI, and sends the bid from your account.
 - **Jobs**: turns a pasted job description into a tailored application email, finds the recipient in the text, and sends it from your own Gmail after you review it.
+- **Outreach**: sends one email to a whole list (pasted addresses or a CSV), personalised per person, slowly and on a schedule, from the same Gmail.
 
 ```
 Freelance: new project -> hard rules -> selection prompt -> proposal prompt -> approval queue or auto-bid
 Jobs:      job description -> recipient + details extracted -> AI draft -> your review -> Gmail
+Outreach:  list + template (or AI per person) -> checks -> paced sender inside a daily window -> replies and bounces tracked
 ```
 
 The Jobs service lives in `backend/app/jobs/` with its own tables (`job_*`), API (`/api/jobs/...`) and pages (`/jobs/...`). It shares only the login, the database connection and the AI client with the freelance service.
@@ -115,6 +117,23 @@ Only the refresh token is stored, encrypted with a key derived from `SECRET_KEY`
 - A warning before writing again to an address or company applied to recently.
 - Nothing is sent without you pressing Send, and the same email can never go out twice.
 - The AI may only claim what is in Jobs > Profile & CVs, and never adds an address that is not in the job description.
+
+## Outreach service
+
+Lives in `backend/app/outreach/` (tables `outreach_*`, API `/api/outreach/...`, pages `/outreach/...`). It uses the Gmail connection and signature from Jobs settings. The sender runs inside the web process, every 10 seconds; every claim is a database compare-and-set, so a second instance never sends the same email twice. Apply the migration with `alembic upgrade head` (the Dockerfile does it on start).
+
+**Two ways to write**
+- *Template*: one subject and message with `{{first_name|there}}`, `{{company}}` and any column of your sheet, plus `{Hi|Hello}` wording options chosen per person. Write it by hand, pick a saved one, or let the AI write it from a short brief.
+- *AI per person*: the model writes each email from your brief and the person's row, a few ahead of the sender. Any single email can be written and read before it goes out.
+
+**Emails you already wrote**: upload a sheet with `email`, `subject` and `body` columns. Rows that carry their own subject and body are sent exactly as written; rows without them use the template.
+
+**What protects the account**
+- Random wait between emails (at least 15 s), a daily window in your time zone, weekdays only, a per-campaign daily limit with warm-up (10 on day one, +10 per day), and an account-wide limit and gap that also count Jobs applications.
+- Before sending: valid address and mail server, do-not-contact list, nobody written to in the last 30 days (campaigns and Jobs applications), and no email goes out with an empty template variable.
+- After sending: replies and bounces are read from the threads; bounces join the do-not-contact list and a campaign pauses itself at 8% bounces. Out-of-office answers do not count as replies.
+- Gmail rate limits or a revoked connection pause the campaign instead of retrying. Server errors are retried with a growing wait; a send whose outcome is unknown is marked failed and never retried, so nobody gets the email twice.
+- Send me a test, preview of exactly what each person gets, and CSV export of results.
 
 ## What is checked before a bid
 
