@@ -13,6 +13,8 @@ class FollowUp(BaseModel):
     # Empty: "Re: <first subject>", so it stays in the same conversation.
     subject: str = Field("", max_length=300)
     body: str = Field(min_length=1, max_length=20000)
+    # Attach the CV chosen for the campaign or application to this follow-up too.
+    attach_resume: bool = False
 
 
 def check_followups(items: list[FollowUp]) -> list[FollowUp]:

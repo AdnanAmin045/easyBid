@@ -346,7 +346,10 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         await session.commit()
         return False
 
-    attachment = None  # the CV went with the first email
+    attachment = None
+    if campaign.followups[step].get("attach_resume") and campaign.resume_id and campaign.resume:
+        data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
+        attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(
         sender_email=account["email"],
         sender_name=jobs.sender_name,
@@ -477,7 +480,7 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         return False
 
     attachment = None
-    if campaign.resume_id and campaign.resume:
+    if campaign.attach_first and campaign.resume_id and campaign.resume:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(

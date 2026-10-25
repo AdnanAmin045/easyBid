@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select, update
 from app.config import get_env
 from app.jobs import gmail as gmail_lib
 from app.jobs.gmail import GmailError
-from app.jobs.models import ApplicationStatus, JobApplication
+from app.jobs.models import ApplicationStatus, JobApplication, JobResume
 from app.jobs.schemas import JobSettings
 from app.models import utcnow
 from app.outreach import engine, render
@@ -164,6 +164,10 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         await session.commit()
         return False
 
+    attachment = None
+    if application.followups[step].get("attach_resume") and application.resume_id and application.resume:
+        data = await session.scalar(select(JobResume.data).where(JobResume.id == application.resume_id))
+        attachment = gmail_lib.Attachment(application.resume.filename, application.resume.content_type, data)
     message = gmail_lib.build_message(
         sender_email=account["email"],
         sender_name=jobs.sender_name,
@@ -171,6 +175,7 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         cc=[],
         subject=composed.subject,
         body=composed.body,
+        attachment=attachment,
         in_reply_to=application.rfc_id or None,
     )
     try:

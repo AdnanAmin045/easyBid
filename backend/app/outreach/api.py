@@ -346,6 +346,9 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
     reason = engine.window_reason(campaign, now)
     if reason and campaign.status != CampaignStatus.RUNNING:
         warnings.append(reason + ".")
+    wants_cv = [i + 1 for i, f in enumerate(campaign.followups) if f.get("attach_resume")]
+    if wants_cv and not campaign.resume_id:
+        blockers.append(f"Follow-up {', '.join(map(str, wants_cv))} should carry the CV, but no CV is chosen for the campaign.")
     if campaign.followups:
         days = [f["days"] for f in campaign.followups]
         warnings.append(
@@ -692,7 +695,7 @@ async def test_send(
         raise HTTPException(422, "The email has no subject or no message yet")
     jobs = await engine.jobs_settings(session)
     attachment = None
-    if campaign.resume_id and campaign.resume:
+    if campaign.attach_first and campaign.resume_id and campaign.resume:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(
