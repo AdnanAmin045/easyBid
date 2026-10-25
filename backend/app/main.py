@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.api import public, router
 from app.jobs import api as jobs_api
+from app.jobs import followups as job_followups
 from app.jobs.gmail import GmailClient
 from app.outreach import api as outreach_api
 from app.outreach import engine as outreach_engine
@@ -54,12 +56,22 @@ async def scheduler_loop(sv: Services, standby: bool) -> None:
 
 async def outreach_loop(js: jobs_api.JobServices) -> None:
     """Sends campaign emails. Safe next to another instance: every claim is a compare-and-set in the database."""
+    failures = 0
     while True:
         try:
             await outreach_engine.tick(js)
+            await job_followups.tick(js)
+            failures = 0
+        except (OperationalError, DBAPIError, OSError, TimeoutError) as e:
+            # The database is unreachable (network down, Supabase paused). Say so once, briefly, and back off.
+            failures += 1
+            if failures == 1 or failures % 10 == 0:
+                logger.warning("Outreach: database unreachable (%s), retrying with a longer wait", type(e).__name__)
         except Exception:
+            failures += 1
             logger.exception("Outreach tick failed")
-        await asyncio.sleep(OUTREACH_TICK_SECONDS)
+        # 10 s normally; after repeated failures wait longer, up to 2 minutes.
+        await asyncio.sleep(min(OUTREACH_TICK_SECONDS * 2 ** min(failures, 4), 120))
 
 
 async def keepalive_loop(url: str) -> None:

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.jobs.schemas import ResumeOut
+from app.jobs.schemas import FollowUp, ResumeOut
 
 Mode = Literal["template", "ai"]
 
@@ -40,6 +40,7 @@ class CampaignIn(BaseModel):
     timezone: str = "UTC"
     weekdays_only: bool = True
     ramp_up: bool = True
+    followups: list[FollowUp] = Field(default=[], max_length=5)
 
     @field_validator("timezone")
     @classmethod
@@ -56,6 +57,8 @@ class CampaignIn(BaseModel):
             raise ValueError("The longest wait must not be shorter than the shortest wait")
         if self.window_end_hour <= self.window_start_hour:
             raise ValueError("The sending window must end after it starts")
+        if sum(f.days for f in self.followups) > 60:
+            raise ValueError("The follow-ups must all be sent within 60 days of the first email")
         return self
 
 
@@ -81,6 +84,7 @@ class CampaignPatch(BaseModel):
     timezone: str | None = None
     weekdays_only: bool | None = None
     ramp_up: bool | None = None
+    followups: list[FollowUp] | None = None
 
 
 class CampaignBrief(BaseModel):
@@ -117,6 +121,9 @@ class CampaignOut(CampaignBrief):
     weekdays_only: bool
     ramp_up: bool
     next_send_at: datetime | None
+    followups: list[FollowUp] = []
+    followups_sent: int = 0  # follow-up emails that went out
+    followups_scheduled: int = 0  # people still waiting for a follow-up
     counts: dict[str, int] = {}
     sent_24h: int = 0
     # Why nothing is going out right now (outside the window, daily limit, ...), or None when it is on its way.
@@ -138,6 +145,8 @@ class RecipientOut(BaseModel):
     attempts: int
     error: str | None
     sent_at: datetime | None
+    last_contact_at: datetime | None
+    followups_sent: int
     gmail_thread_id: str | None
     created_at: datetime
 
@@ -209,6 +218,7 @@ class Preview(BaseModel):
     body: str
     missing: list[str]
     own_content: bool
+    step: int = 0  # 0 is the first email, 1 the first follow-up, ...
 
 
 class TestSendIn(BaseModel):

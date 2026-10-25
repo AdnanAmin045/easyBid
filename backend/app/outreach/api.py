@@ -6,7 +6,7 @@ import io
 from datetime import timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +29,7 @@ from app.services import store
 from app.services.llm import LLMError
 
 MAX_IMPORT = 5000
+MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_RECIPIENTS = 20000
 EDITABLE_RECIPIENT = (RecipientStatus.PENDING, RecipientStatus.FAILED, RecipientStatus.SKIPPED)
 
@@ -70,6 +71,18 @@ async def _counts(session: AsyncSession, campaign_id: int) -> dict[str, int]:
     return dict(rows.all())
 
 
+async def _scheduled(session: AsyncSession, campaign: Campaign) -> int:
+    """People written to who still have a follow-up ahead of them."""
+    if not campaign.followups:
+        return 0
+    query = select(func.count()).select_from(Recipient).where(
+        Recipient.campaign_id == campaign.id,
+        Recipient.status == RecipientStatus.SENT,
+        Recipient.followups_sent < len(campaign.followups),
+    )
+    return await session.scalar(query) or 0
+
+
 async def _columns(session: AsyncSession, campaign_id: int) -> list[str]:
     rows = await session.scalars(select(func.jsonb_object_keys(Recipient.fields)).where(Recipient.campaign_id == campaign_id).distinct())
     return sorted(rows)
@@ -90,6 +103,8 @@ async def _out(session: AsyncSession, campaign: Campaign) -> schemas.CampaignOut
             "sent_24h": await engine.delivered_since(session, now - timedelta(hours=24), now, campaign.id),
             "waiting": waiting,
             "columns": await _columns(session, campaign.id),
+            "followups_sent": await session.scalar(select(func.coalesce(func.sum(Recipient.followups_sent), 0)).where(Recipient.campaign_id == campaign.id)) or 0,
+            "followups_scheduled": await _scheduled(session, campaign),
         }
     )
 
@@ -257,6 +272,8 @@ async def update_campaign(campaign_id: int, body: schemas.CampaignPatch, session
     if body.clear_resume:
         merged.resume_id = None
     resume = await _resume_for(session, merged.resume_id)
+    if merged.model_dump()["followups"] != campaign.followups:
+        _reopen(campaign)  # a finished campaign with a new follow-up has more to send
     for field, value in merged.model_dump().items():
         setattr(campaign, field, value)
     campaign.resume = resume
@@ -329,6 +346,11 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
     reason = engine.window_reason(campaign, now)
     if reason and campaign.status != CampaignStatus.RUNNING:
         warnings.append(reason + ".")
+    if campaign.followups:
+        days = [f["days"] for f in campaign.followups]
+        warnings.append(
+            f"{len(days)} follow-up(s), {', '.join(str(d) for d in days)} day(s) after the previous email. Anyone who replies or bounces is left alone."
+        )
     if campaign.ramp_up:
         warnings.append(f"Warm-up is on: {engine.WARMUP_STEP} emails on day one, {engine.WARMUP_STEP} more each day up to {campaign.daily_limit}.")
 
@@ -406,7 +428,41 @@ async def import_recipients(
 ):
     campaign = await _campaign(session, campaign_id)
     _open(campaign)
-    sheet = importer.parse(body.text)
+    return await _add_recipients(session, js, campaign, importer.parse(body.text), body.skip_recent, body.check_domains)
+
+
+@router.post("/campaigns/{campaign_id}/recipients/import-file", response_model=schemas.ImportOut)
+async def import_recipients_file(
+    campaign_id: int,
+    file: UploadFile = File(...),
+    skip_recent: bool = Form(True),
+    check_domains: bool = Form(True),
+    session: AsyncSession = Depends(get_session),
+    js: JobServices = Depends(job_services),
+):
+    """An Excel (.xlsx) file, or a CSV/TSV/text file, read exactly like pasted text."""
+    campaign = await _campaign(session, campaign_id)
+    _open(campaign)
+    data = await file.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "The file is larger than 5 MB. Split it and import in parts.")
+    if (file.filename or "").lower().endswith(".xlsx"):
+        try:
+            sheet = importer.parse_xlsx(data)
+        except ValueError as e:
+            raise HTTPException(415, str(e)) from None
+    else:
+        try:
+            sheet = importer.parse(data.decode("utf-8-sig"))
+        except UnicodeDecodeError:
+            raise HTTPException(415, "Save the file as .xlsx or as UTF-8 CSV") from None
+    return await _add_recipients(session, js, campaign, sheet, skip_recent, check_domains)
+
+
+async def _add_recipients(
+    session: AsyncSession, js: JobServices, campaign: Campaign, sheet: importer.Sheet, skip_recent: bool, check_domains: bool
+) -> schemas.ImportOut:
+    campaign_id = campaign.id
     if len(sheet.rows) > MAX_IMPORT:
         raise HTTPException(413, f"{len(sheet.rows)} addresses in one go is too many. Import at most {MAX_IMPORT} at a time.")
     existing_count = await session.scalar(select(func.count()).select_from(Recipient).where(Recipient.campaign_id == campaign_id)) or 0
@@ -424,10 +480,10 @@ async def import_recipients(
 
     s = await engine.outreach_settings(session)
     suppressed = set(await session.scalars(select(Suppression.email).where(Suppression.email.in_([r.email for r in rows])))) if rows else set()
-    recent = await engine.recent_contacts(session, [r.email for r in rows], s.skip_recent_days) if body.skip_recent else {}
+    recent = await engine.recent_contacts(session, [r.email for r in rows], s.skip_recent_days) if skip_recent else {}
 
     bad_domains: dict[str, str] = {}
-    if body.check_domains and rows:
+    if check_domains and rows:
         by_domain = {r.email.rsplit("@", 1)[1]: r.email for r in rows}
         gate = asyncio.Semaphore(20)
 
@@ -584,8 +640,12 @@ async def generate_for_recipient(
 
 
 @router.get("/campaigns/{campaign_id}/preview", response_model=schemas.Preview)
-async def preview(campaign_id: int, recipient_id: int | None = None, session: AsyncSession = Depends(get_session)):
-    """The email exactly as it will be sent to a recipient (the first in the queue by default)."""
+async def preview(
+    campaign_id: int, recipient_id: int | None = None, step: int = 0, session: AsyncSession = Depends(get_session)
+):
+    """The email exactly as it will be sent to a recipient (the first in the queue by default).
+
+    step 0 is the first email, 1 the first follow-up, and so on."""
     campaign = await _campaign(session, campaign_id)
     if recipient_id is not None:
         recipient = await _recipient(session, campaign_id, recipient_id)
@@ -595,7 +655,13 @@ async def preview(campaign_id: int, recipient_id: int | None = None, session: As
         )
         if recipient is None:
             raise HTTPException(404, "Add recipients to see a preview")
-    composed = engine.compose(campaign, recipient, await engine.jobs_settings(session))
+    jobs = await engine.jobs_settings(session)
+    if step > 0:
+        if step > len(campaign.followups):
+            raise HTTPException(404, "This campaign has no such follow-up")
+        composed = engine.compose_followup(campaign, recipient, step - 1, jobs)
+    else:
+        composed = engine.compose(campaign, recipient, jobs)
     return schemas.Preview(
         recipient_id=recipient.id,
         email=recipient.email,
@@ -603,6 +669,7 @@ async def preview(campaign_id: int, recipient_id: int | None = None, session: As
         body=composed.body,
         missing=composed.missing,
         own_content=bool(recipient.body),
+        step=step,
     )
 
 
@@ -618,7 +685,7 @@ async def test_send(
     account = await store.get_config(session, GMAIL_KEY)
     if not account:
         raise HTTPException(409, "Connect Gmail in Jobs settings first")
-    preview_ = await preview(campaign_id, body.recipient_id, session)
+    preview_ = await preview(campaign_id, body.recipient_id, 0, session)
     if preview_.missing:
         raise HTTPException(422, "Missing value for: " + ", ".join(preview_.missing))
     if not preview_.subject or not preview_.body.strip():
@@ -655,10 +722,10 @@ async def export_campaign(campaign_id: int, session: AsyncSession = Depends(get_
     campaign = await _campaign(session, campaign_id)
     out = io.StringIO()
     writer_ = csv.writer(out)
-    writer_.writerow(["email", "name", "company", "status", "sent_at", "subject", "error"])
+    writer_.writerow(["email", "name", "company", "status", "sent_at", "follow_ups_sent", "subject", "error"])
     rows = await session.stream_scalars(select(Recipient).where(Recipient.campaign_id == campaign_id).order_by(Recipient.position, Recipient.id))
     async for r in rows:
-        writer_.writerow([_cell(v) for v in (r.email, r.name, r.company, r.status, r.sent_at.isoformat() if r.sent_at else "", r.subject, r.error)])
+        writer_.writerow([_cell(v) for v in (r.email, r.name, r.company, r.status, r.sent_at.isoformat() if r.sent_at else "", r.followups_sent, r.subject, r.error)])
     name = "".join(c if c.isalnum() else "-" for c in campaign.name)[:60] or "campaign"
     return Response(
         out.getvalue(),

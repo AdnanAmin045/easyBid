@@ -34,7 +34,7 @@ GMAIL_KEY = "jobs_gmail"
 
 MAX_ATTEMPTS = 3
 STUCK_AFTER = timedelta(minutes=10)  # a recipient stuck in "sending" means the server stopped mid-send
-REPLY_WINDOW = timedelta(days=14)  # how long after sending a thread is watched for replies and bounces
+REPLY_WINDOW = timedelta(days=75)  # how long after the first email a thread is watched: the longest follow-up plan plus a margin
 WARMUP_STEP = 10  # emails more per day while a campaign warms up
 GENERATE_PER_TICK = 2
 CHECKS_PER_TICK = 5
@@ -77,18 +77,18 @@ def daily_allowance(campaign: Campaign, now: datetime) -> int:
 
 
 async def delivered_since(session: AsyncSession, since: datetime, now: datetime, campaign_id: int | None = None) -> int:
-    query = select(func.count()).select_from(Recipient).where(Recipient.sent_at > since, Recipient.sent_at <= now)
+    query = select(func.count()).select_from(Recipient).where(Recipient.last_contact_at > since, Recipient.last_contact_at <= now)
     if campaign_id is not None:
         return await session.scalar(query.where(Recipient.campaign_id == campaign_id)) or 0
     applications = select(func.count()).where(
-        JobApplication.status == ApplicationStatus.SENT, JobApplication.sent_at > since, JobApplication.sent_at <= now
+        JobApplication.status == ApplicationStatus.SENT, JobApplication.last_contact_at > since, JobApplication.last_contact_at <= now
     )
     # One Gmail account sends both, so both count against its limit.
     return (await session.scalar(query) or 0) + (await session.scalar(applications) or 0)
 
 
 async def last_send(session: AsyncSession, now: datetime) -> datetime | None:
-    return await session.scalar(select(func.max(Recipient.sent_at)).where(Recipient.sent_at <= now))
+    return await session.scalar(select(func.max(Recipient.last_contact_at)).where(Recipient.last_contact_at <= now))
 
 
 async def waiting_reason(session: AsyncSession, campaign: Campaign, now: datetime, s: OutreachSettings) -> str | None:
@@ -114,6 +114,27 @@ class Composed:
     missing: list[str]
 
 
+def with_signature(text: str, jobs: JobSettings) -> str:
+    """The text with the user's signature under it, unless it already ends with one.
+
+    Emails written by hand often carry their own sign-off; adding the saved signature as well would sign twice.
+    """
+    signature = jobs.signature.strip() or jobs.sender_name.strip()
+    if not signature or not text:
+        return text
+    name = jobs.sender_name.strip().lower()
+    tail = " ".join(text[-600:].lower().split())
+    marks = [
+        " ".join(line.lower().split())
+        for line in signature.splitlines()
+        if "@" in line or "http" in line or (name and name in line.lower())
+    ]
+    marks.append(name)
+    if any(mark and mark in tail for mark in marks):
+        return text
+    return f"{text}\n\n{signature}"
+
+
 def compose(campaign: Campaign, recipient: Recipient, jobs: JobSettings) -> Composed:
     """The exact email for this recipient. Used by previews, test sends and the sender, so they always agree."""
     ctx = render.context(recipient.email, recipient.name, recipient.company, recipient.fields)
@@ -121,9 +142,8 @@ def compose(campaign: Campaign, recipient: Recipient, jobs: JobSettings) -> Comp
     body = render.render(recipient.body or campaign.body_template, ctx, f"{recipient.id}b")
     footer = render.render(campaign.footer, ctx, f"{recipient.id}f")
     text = body.text.rstrip()
-    signature = jobs.signature.strip() or jobs.sender_name.strip()
-    if campaign.append_signature and signature and text:
-        text += f"\n\n{signature}"
+    if campaign.append_signature:
+        text = with_signature(text, jobs)
     if footer.text.strip() and text:
         text += f"\n\n{footer.text.strip()}"
     missing = list(dict.fromkeys(subject.missing + body.missing + footer.missing))
@@ -198,11 +218,10 @@ async def _pause(session: AsyncSession, campaign_ids: list[int], reason: str, no
 
 
 async def finish_if_done(session: AsyncSession, campaign: Campaign, now: datetime, notify=None) -> bool:
-    open_left = await session.scalar(
-        select(func.count())
-        .select_from(Recipient)
-        .where(Recipient.campaign_id == campaign.id, Recipient.status.in_([RecipientStatus.PENDING, RecipientStatus.SENDING]))
-    )
+    waiting = Recipient.status.in_([RecipientStatus.PENDING, RecipientStatus.SENDING])
+    if campaign.followups:  # someone who has been written to and still has follow-ups ahead is not finished
+        waiting = or_(waiting, (Recipient.status == RecipientStatus.SENT) & (Recipient.followups_sent < len(campaign.followups)))
+    open_left = await session.scalar(select(func.count()).select_from(Recipient).where(Recipient.campaign_id == campaign.id, waiting))
     if open_left:
         return False
     campaign.status, campaign.finished_at, campaign.next_send_at = CampaignStatus.COMPLETED, now, None
@@ -233,6 +252,146 @@ async def _claim_recipient(session: AsyncSession, campaign: Campaign, now: datet
     return recipient
 
 
+def compose_followup(campaign: Campaign, recipient: Recipient, step: int, jobs: JobSettings) -> Composed:
+    """Follow-up number `step` (0 based) for this recipient, in the same conversation as the first email."""
+    plan = campaign.followups[step]
+    ctx = render.context(recipient.email, recipient.name, recipient.company, recipient.fields)
+    body = render.render(plan["body"], ctx, f"{recipient.id}f{step}b")
+    own_subject = render.render(plan.get("subject", ""), ctx, f"{recipient.id}f{step}s")
+    # What was actually sent, or for a preview of someone not written to yet, what the first email will say.
+    first = recipient.sent_subject or compose(campaign, recipient, jobs).subject
+    subject = own_subject.text.strip() or (first if first.lower().startswith("re:") else f"Re: {first}")
+    text = body.text.rstrip()
+    if campaign.append_signature:
+        text = with_signature(text, jobs)
+    footer = render.render(campaign.footer, ctx, f"{recipient.id}f{step}t").text.strip()
+    if footer and text:
+        text += f"\n\n{footer}"
+    return Composed(subject=" ".join(subject.split()), body=text, missing=list(dict.fromkeys(body.missing + own_subject.missing)))
+
+
+async def _claim_followup(session: AsyncSession, campaign: Campaign, now: datetime) -> tuple[Recipient, int] | None:
+    """The next person whose follow-up is due, marked as being sent. (recipient, step index)."""
+    plan = campaign.followups or []
+    if not plan:
+        return None
+    soonest = min(step["days"] for step in plan)
+    rows = await session.scalars(
+        select(Recipient)
+        .where(
+            Recipient.campaign_id == campaign.id,
+            Recipient.status == RecipientStatus.SENT,
+            Recipient.followups_sent < len(plan),
+            Recipient.gmail_thread_id.is_not(None),
+            Recipient.last_contact_at <= now - timedelta(days=soonest),
+            or_(Recipient.retry_at.is_(None), Recipient.retry_at <= now),
+        )
+        .order_by(Recipient.last_contact_at)
+        .limit(50)
+        .with_for_update(skip_locked=True)
+    )
+    for recipient in rows:
+        step = recipient.followups_sent
+        if recipient.last_contact_at + timedelta(days=plan[step]["days"]) <= now:
+            recipient.status = RecipientStatus.SENDING
+            return recipient, step
+    return None
+
+
+async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recipient: Recipient, step: int, now: datetime) -> bool:
+    """Send follow-up `step`, after making sure the person has not answered and the address is still fine."""
+
+    def settle(error: str | None = None, skip: bool = False, retry_in: timedelta | None = None) -> bool:
+        recipient.status, recipient.error = RecipientStatus.SENT, error
+        recipient.retry_at = now + retry_in if retry_in else None
+        if skip:  # give up on this step, the next one (if any) follows its own delay
+            recipient.followups_sent, recipient.followup_errors = step + 1, 0
+        _release(campaign)
+        return False
+
+    if await is_suppressed(session, recipient.email):
+        recipient.followups_sent = len(campaign.followups)
+        settle("On the do-not-contact list, no follow-ups")
+        await session.commit()
+        return False
+
+    account = await store.get_config(session, GMAIL_KEY)
+    if not account:
+        settle()
+        await _pause(session, [campaign.id], "Gmail is not connected", js.notify)
+        await session.commit()
+        return False
+    try:
+        refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
+        # Never follow up blind: look at the conversation first.
+        outcome = classify_thread(await js.gmail.thread(refresh, recipient.gmail_thread_id), account["email"], recipient.gmail_message_id)
+    except GmailError as e:
+        settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
+        await session.commit()
+        return False
+    if outcome:
+        settle()
+        recipient.status = outcome
+        if outcome == RecipientStatus.BOUNCED:
+            recipient.error = "Gmail could not deliver this email"
+            if not await is_suppressed(session, recipient.email):
+                session.add(Suppression(email=recipient.email, reason="Bounced"))
+        await session.commit()
+        return False
+
+    jobs = await jobs_settings(session)
+    composed = compose_followup(campaign, recipient, step, jobs)
+    if composed.missing or not composed.body.strip():
+        settle("Follow-up %d skipped: missing value for %s" % (step + 1, ", ".join(composed.missing) or "the message"), skip=True)
+        await session.commit()
+        return False
+
+    attachment = None  # the CV went with the first email
+    message = gmail_lib.build_message(
+        sender_email=account["email"],
+        sender_name=jobs.sender_name,
+        to=recipient.email,
+        cc=[],
+        subject=composed.subject,
+        body=composed.body,
+        attachment=attachment,
+        in_reply_to=recipient.rfc_id or None,
+    )
+    try:
+        await js.gmail.send(refresh, message, thread_id=recipient.gmail_thread_id)
+    except GmailError as e:
+        text = str(e)
+        code = e.status_code
+        store.log_event(session, "outreach_send_failed", f"{recipient.email} (follow-up {step + 1}): {text}", "error")
+        if e.outcome_unknown:
+            settle(f"Follow-up {step + 1}: {text}", skip=True)  # it may have gone, so it is not repeated
+        elif code == 401 or (code == 400 and ("revoked" in text or "expired" in text)):
+            settle()
+            running = list(await session.scalars(select(Campaign.id).where(Campaign.status == CampaignStatus.RUNNING)))
+            await _pause(session, running, "Gmail access was revoked. Connect Gmail again, then resume.", js.notify)
+        elif code == 429 or (code == 403 and any(w in text.lower() for w in ("rate", "quota", "limit"))):
+            settle()
+            await _pause(session, [campaign.id], f"Gmail is limiting this account. {text}", js.notify)
+        elif code is None or code >= 500:
+            recipient.followup_errors += 1
+            if recipient.followup_errors >= MAX_ATTEMPTS:
+                settle(f"Follow-up {step + 1} failed: {text}", skip=True)
+            else:
+                settle(text, retry_in=timedelta(minutes=5 * recipient.followup_errors))
+        else:
+            settle(f"Follow-up {step + 1} refused: {text}", skip=True)
+        await session.commit()
+        return False
+
+    recipient.status, recipient.error, recipient.retry_at = RecipientStatus.SENT, None, None
+    recipient.followups_sent, recipient.followup_errors = step + 1, 0
+    recipient.last_contact_at = now
+    recipient.rfc_id = str(message["Message-ID"])
+    store.log_event(session, "outreach_followup", f"Follow-up {step + 1} sent to {recipient.email} ({campaign.name})")
+    await session.commit()
+    return True
+
+
 async def send_next(js, campaign_id: int, now: datetime) -> bool:
     """Send one email of this campaign if it is allowed to. True when an email went out."""
     async with js.sessions() as session:
@@ -260,6 +419,12 @@ async def send_next(js, campaign_id: int, now: datetime) -> bool:
         if slot.rowcount != 1:
             await session.rollback()
             return False
+
+        # Follow-ups that are due go first: those people are already warm.
+        due = await _claim_followup(session, campaign, now)
+        if due:
+            await session.commit()
+            return await _deliver_followup(js, session, campaign, due[0], due[1], now)
 
         recipient = await _claim_recipient(session, campaign, now)
         if recipient is None:
@@ -332,7 +497,8 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         return False
 
     recipient.status, recipient.error, recipient.retry_at = RecipientStatus.SENT, None, None
-    recipient.sent_at = now
+    recipient.sent_at = recipient.last_contact_at = now
+    recipient.sent_subject, recipient.rfc_id = composed.subject, str(message["Message-ID"])
     recipient.gmail_message_id, recipient.gmail_thread_id = result.get("id"), result.get("threadId")
     store.log_event(session, "outreach_sent", f"Sent to {recipient.email} ({campaign.name})")
     await session.commit()
@@ -517,16 +683,27 @@ async def _pause_on_bounces(js, session: AsyncSession, campaign_id: int, s: Outr
 
 async def recover_stuck(js, now: datetime) -> None:
     async with js.sessions() as session:
+        old = Recipient.status == RecipientStatus.SENDING, Recipient.updated_at < now - STUCK_AFTER
         stuck = await session.execute(
             update(Recipient)
-            .where(Recipient.status == RecipientStatus.SENDING, Recipient.updated_at < now - STUCK_AFTER)
+            .where(*old, Recipient.sent_at.is_(None))
             .values(
                 status=RecipientStatus.FAILED,
                 error="The server stopped while sending this. Check Gmail's Sent folder before retrying.",
             )
         )
-        if stuck.rowcount:
-            store.log_event(session, "outreach_recovered", f"{stuck.rowcount} email(s) were left half-sent", "warning")
+        # A follow-up that was interrupted is skipped, never repeated: it may already have gone.
+        interrupted = await session.execute(
+            update(Recipient)
+            .where(*old, Recipient.sent_at.is_not(None))
+            .values(
+                status=RecipientStatus.SENT,
+                followups_sent=Recipient.followups_sent + 1,
+                error="A follow-up was interrupted by a server stop and skipped. Check Gmail's Sent folder.",
+            )
+        )
+        if stuck.rowcount or interrupted.rowcount:
+            store.log_event(session, "outreach_recovered", f"{stuck.rowcount + interrupted.rowcount} email(s) were left half-sent", "warning")
         await session.commit()
 
 
