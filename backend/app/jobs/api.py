@@ -273,6 +273,7 @@ async def create_application(
         cc=[str(c).lower() for c in body.cc],
         resume_id=resume.id if resume else None,
         resume=resume,
+        followups=[f.model_dump() for f in (await get_settings(session)).default_followups],
     )
     await _write(session, js, application)
     session.add(application)
@@ -331,6 +332,18 @@ async def update_application(application_id: int, body: schemas.ApplicationUpdat
     elif body.resume_id is not None:
         resume = await _resume(session, body.resume_id)
         application.resume_id, application.resume = resume.id, resume
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.put("/applications/{application_id}/followups", response_model=schemas.ApplicationOut)
+async def set_followups(application_id: int, body: schemas.FollowUpsIn, session: AsyncSession = Depends(get_session)):
+    """Follow-ups can be planned before sending and changed (or cancelled with an empty list) after it."""
+    application = await _application(session, application_id)
+    if application.status == ApplicationStatus.SENDING:
+        raise HTTPException(409, "This application is being sent")
+    application.followups = [f.model_dump() for f in body.followups]
     await session.commit()
     await session.refresh(application)
     return application
@@ -426,7 +439,8 @@ async def send_application(
         raise HTTPException(502, str(e)) from e
 
     application.status = ApplicationStatus.SENT
-    application.sent_at = utcnow()
+    application.sent_at = application.last_contact_at = utcnow()
+    application.sent_subject, application.rfc_id = application.subject, str(message["Message-ID"])
     application.gmail_message_id = result.get("id")
     application.gmail_thread_id = result.get("threadId")
     _log(session, "sent", f"Sent to {application.to_email}: {application.subject}")

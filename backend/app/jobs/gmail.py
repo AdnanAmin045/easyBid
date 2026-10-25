@@ -77,6 +77,7 @@ def build_message(
     subject: str,
     body: str,
     attachment: Attachment | None = None,
+    in_reply_to: str | None = None,
 ) -> EmailMessage:
     """A plain-text email: no HTML, no tracking, the way a person writes one."""
     message = EmailMessage()
@@ -85,6 +86,10 @@ def build_message(
     if cc:
         message["Cc"] = ", ".join(cc)
     message["Subject"] = subject
+    if in_reply_to:
+        # With the same subject and threadId on send, this keeps a follow-up in the original conversation.
+        message["In-Reply-To"] = in_reply_to
+        message["References"] = in_reply_to
     message["Message-ID"] = make_msgid(domain=sender_email.rsplit("@", 1)[-1])
     message.set_content(body)
     if attachment:
@@ -181,12 +186,12 @@ class GmailClient:
         res = await self._http.get(f"{API}/profile", headers={"Authorization": f"Bearer {access_token}"})
         return (await self._json(res))["emailAddress"]
 
-    async def send(self, refresh_token: str, message: EmailMessage) -> dict:
+    async def send(self, refresh_token: str, message: EmailMessage, thread_id: str | None = None) -> dict:
         """Send the message. Returns {'id': ..., 'threadId': ...}."""
         token = await self.access_token(refresh_token)
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         try:
-            res = await self._http.post(f"{API}/messages/send", headers={"Authorization": f"Bearer {token}"}, json={"raw": raw})
+            res = await self._http.post(f"{API}/messages/send", headers={"Authorization": f"Bearer {token}"}, json={"raw": raw, **({"threadId": thread_id} if thread_id else {})})
         except httpx.HTTPError as e:
             # The request may or may not have reached Gmail; never retry blindly.
             raise GmailError(f"Outcome unknown, check Gmail's Sent folder before retrying: {e!r}", outcome_unknown=True) from e

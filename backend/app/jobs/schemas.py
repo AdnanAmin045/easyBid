@@ -1,9 +1,24 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 ProfileKind = Literal["summary", "experience", "project", "skill", "education", "link"]
+
+
+class FollowUp(BaseModel):
+    """One follow-up: sent `days` after the previous email to someone who has not replied."""
+
+    days: int = Field(ge=1, le=60)
+    # Empty: "Re: <first subject>", so it stays in the same conversation.
+    subject: str = Field("", max_length=300)
+    body: str = Field(min_length=1, max_length=20000)
+
+
+def check_followups(items: list[FollowUp]) -> list[FollowUp]:
+    if sum(f.days for f in items) > 60:
+        raise ValueError("The follow-ups must all be sent within 60 days of the first email")
+    return items
 
 
 class JobSettings(BaseModel):
@@ -18,6 +33,10 @@ class JobSettings(BaseModel):
     email_max_chars: int = Field(2500, ge=300, le=10000)
     # Warn before writing to an address or company applied to within this many days.
     duplicate_window_days: int = Field(30, ge=0, le=365)
+    # Follow-ups every new application starts with; each application can change them.
+    default_followups: list[FollowUp] = Field(default=[], max_length=5)
+
+    _plan = field_validator("default_followups")(check_followups)
 
 
 class EmailCheck(BaseModel):
@@ -66,6 +85,12 @@ class ApplicationUpdate(BaseModel):
     clear_resume: bool = False
 
 
+class FollowUpsIn(BaseModel):
+    followups: list[FollowUp] = Field(default=[], max_length=5)
+
+    _plan = field_validator("followups")(check_followups)
+
+
 class SendIn(BaseModel):
     # Required to write again to an address or company applied to recently.
     allow_duplicate: bool = False
@@ -96,6 +121,7 @@ class ApplicationBrief(BaseModel):
     error: str | None
     sent_at: datetime | None
     created_at: datetime
+    outcome: str = ""  # "", "replied" or "bounced"
 
 
 class ApplicationOut(ApplicationBrief):
@@ -108,6 +134,10 @@ class ApplicationOut(ApplicationBrief):
     prompt_id: int | None
     model: str
     gmail_thread_id: str | None
+    followups: list[FollowUp] = []
+    followups_sent: int = 0
+    followup_note: str | None = None
+    last_contact_at: datetime | None = None
 
 
 class ProfileItemIn(BaseModel):
