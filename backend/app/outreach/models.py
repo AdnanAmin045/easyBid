@@ -46,6 +46,7 @@ class Campaign(Base):
     footer: Mapped[str] = mapped_column(Text, default="")  # e.g. an opt-out line
     append_signature: Mapped[bool] = mapped_column(Boolean, default=True)
     resume_id: Mapped[int | None] = mapped_column(ForeignKey("job_resumes.id", ondelete="SET NULL"))
+    attach_first: Mapped[bool] = mapped_column(Boolean, default=True)  # attach the CV to the first email
 
     # Pacing: a random wait between two emails, inside a daily window, never more than daily_limit in 24 hours.
     min_delay_seconds: Mapped[int] = mapped_column(Integer, default=45)
