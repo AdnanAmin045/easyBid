@@ -361,7 +361,7 @@ async def test_account_limit_counts_job_applications_too(outreach, google):
     await client.put("/api/outreach/settings", json={"daily_limit": 3, "min_gap_seconds": 5, "skip_recent_days": 30, "bounce_pause_percent": 8, "model": "gemini-3.5-flash"})
     async with js.sessions() as session:
         for i in range(2):
-            session.add(JobApplication(status=ApplicationStatus.SENT, source_text="x", to_email=f"job{i}@co.io", sent_at=NOW - timedelta(hours=1)))
+            session.add(JobApplication(status=ApplicationStatus.SENT, source_text="x", to_email=f"job{i}@co.io", sent_at=NOW - timedelta(hours=1), last_contact_at=NOW - timedelta(hours=1)))
         await session.commit()
     campaign = await make_campaign(client)
     await import_text(client, campaign["id"], "a@acmelabs.io\nb@acmelabs.io\nc@acmelabs.io")
@@ -702,3 +702,94 @@ async def test_import_limits(outreach):
     assert (await client.get("/api/outreach/campaigns/999")).status_code == 404
     unauth = await httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test").get("/api/outreach/overview")
     assert unauth.status_code == 401
+
+
+# --- two-column sheets and Excel files --------------------------------------------
+
+FULL_EMAIL = "Subject: Hello from Adnan\n\nDear Ann,\n\nHere is my complete email.\n\nBest,\nAdnan"
+
+
+def workbook(rows: list[list]) -> bytes:
+    from openpyxl import Workbook
+
+    book = Workbook()
+    for row in rows:
+        book.active.append(row)
+    out = io.BytesIO()
+    book.save(out)
+    return out.getvalue()
+
+
+def test_two_columns_without_a_header_are_address_and_whole_email():
+    text = f'ann@acmelabs.io\t"{FULL_EMAIL}"\nbob@globex.io\t"No subject line here, only text."\n'
+    sheet = importer.parse(text)
+    ann, bob = sheet.rows
+    assert not sheet.has_header
+    assert (ann.subject, ann.body.startswith("Dear Ann,"), ann.body.endswith("Adnan")) == ("Hello from Adnan", True, True)
+    assert (bob.subject, bob.body) == ("", "No subject line here, only text.")
+    # A plain list of addresses is still a list of addresses.
+    assert [r.email for r in importer.parse("a@x.io, b@y.io\nc@z.io").rows] == ["a@x.io", "b@y.io", "c@z.io"]
+
+
+def test_excel_with_and_without_a_header():
+    with_header = importer.parse_xlsx(workbook([["Receiver", "Full Email"], ["ann@acmelabs.io", FULL_EMAIL], [None, None], ["bad", "x"]]))
+    (row,) = with_header.rows
+    assert with_header.has_header and row.subject == "Hello from Adnan" and "complete email" in row.body
+    assert with_header.rejected[0].reason == "Not a valid email address" and with_header.rejected[0].line == 4
+
+    plain = importer.parse_xlsx(workbook([["ann@acmelabs.io", "First text"], ["bob@globex.io", "Second text"]]))
+    assert [(r.email, r.body) for r in plain.rows] == [("ann@acmelabs.io", "First text"), ("bob@globex.io", "Second text")]
+    with pytest.raises(ValueError):
+        importer.parse_xlsx(b"this is not a zip")
+
+
+async def test_excel_upload_sends_each_whole_email_as_written(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    campaign = await make_campaign(client, subject_template="", body_template="", append_signature=False)
+    data = workbook([["ann@acmelabs.io", FULL_EMAIL], ["bob@globex.io", "Subject: For Bob\n\nHi Bob, my own words."]])
+    res = await client.post(
+        f"/api/outreach/campaigns/{campaign['id']}/recipients/import-file",
+        files={"file": ("list.xlsx", data, "application/octet-stream")},
+        data={"check_domains": "false"},
+    )
+    assert res.status_code == 200, res.text
+    assert (res.json()["added"], res.json()["with_own_content"]) == (2, 2)
+
+    await start(client, campaign["id"])
+    assert await run_until_done(js, google, limit=4) == 2
+    first, second = sent_mail(google)
+    assert first["To"] == "ann@acmelabs.io" and first["Subject"] == "Hello from Adnan"
+    assert first.get_content().strip() == "Dear Ann,\n\nHere is my complete email.\n\nBest,\nAdnan"
+    assert second["Subject"] == "For Bob" and second.get_content().strip() == "Hi Bob, my own words."
+
+    # Bad files are refused clearly.
+    other = await make_campaign(client, name="Other")
+    bad = await client.post(f"/api/outreach/campaigns/{other['id']}/recipients/import-file", files={"file": ("x.xlsx", b"nope", "application/octet-stream")})
+    assert bad.status_code == 415 and "Excel" in bad.json()["detail"]
+    csv_file = await client.post(
+        f"/api/outreach/campaigns/{other['id']}/recipients/import-file",
+        files={"file": ("x.csv", b"email,name\nzed@acmelabs.io,Zed\n", "text/csv")},
+        data={"check_domains": "false"},
+    )
+    assert csv_file.json()["added"] == 1
+
+
+def test_columns_in_any_order_are_told_apart_by_content():
+    long = "Dear Ann,\n\nThis is my complete message for you with enough words in it.\n\nBest,\nAdnan"
+    # subject, message, address (no header, tab separated like a paste from Excel)
+    text = f'Hello Ann\t"{long}"\tann@acmelabs.io\nHello Bob\t"{long.replace("Ann", "Bob")}"\tbob@globex.io\n'
+    ann, bob = importer.parse(text).rows
+    assert (ann.email, ann.subject, ann.body) == ("ann@acmelabs.io", "Hello Ann", long)
+    assert bob.subject == "Hello Bob" and "Dear Bob" in bob.body
+
+    # message, address in an Excel file without a header
+    plain = importer.parse_xlsx(workbook([[long, "ann@acmelabs.io"], ["Short note", "bob@globex.io"]]))
+    assert [(r.email, r.body) for r in plain.rows] == [("ann@acmelabs.io", long), ("bob@globex.io", "Short note")]
+
+    # With a header the names decide, whatever the order.
+    shuffled = importer.parse("body,email,subject\n\"Text for Ann\",ann@acmelabs.io,Hi\n")
+    assert (shuffled.rows[0].email, shuffled.rows[0].subject, shuffled.rows[0].body) == ("ann@acmelabs.io", "Hi", "Text for Ann")
+
+    # Addresses spread over several columns are still just a list.
+    assert [r.email for r in importer.parse("a@x.io\tb@y.io\nc@z.io\td@w.io").rows] == ["a@x.io", "b@y.io", "c@z.io", "d@w.io"]
