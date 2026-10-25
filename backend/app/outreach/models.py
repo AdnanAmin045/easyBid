@@ -56,6 +56,9 @@ class Campaign(Base):
     timezone: Mapped[str] = mapped_column(String(60), default="UTC")
     weekdays_only: Mapped[bool] = mapped_column(Boolean, default=True)
     ramp_up: Mapped[bool] = mapped_column(Boolean, default=True)  # 10 emails on day one, 10 more each day
+    # Follow-ups: [{"days": 3, "subject": "", "body": "..."}], each sent `days` after the previous email to
+    # everyone who has not replied. An empty subject means "Re: <the first subject>", in the same thread.
+    followups: Mapped[list] = mapped_column(JSONB, default=list)
 
     next_send_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -92,7 +95,13 @@ class Recipient(Base):
     error: Mapped[str | None] = mapped_column(Text)
     gmail_message_id: Mapped[str | None] = mapped_column(String(100))
     gmail_thread_id: Mapped[str | None] = mapped_column(String(100))
-    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # the first email
+    # Follow-up bookkeeping. last_contact_at is the latest email of any kind and drives the limits and the delays.
+    last_contact_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    followups_sent: Mapped[int] = mapped_column(Integer, default=0)  # steps done or skipped
+    followup_errors: Mapped[int] = mapped_column(Integer, default=0)
+    sent_subject: Mapped[str] = mapped_column(String(300), default="")
+    rfc_id: Mapped[str] = mapped_column(String(300), default="")  # Message-ID header of the latest email
     checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # last look for a reply or bounce
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

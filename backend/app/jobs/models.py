@@ -75,6 +75,18 @@ class JobApplication(Base):
     gmail_thread_id: Mapped[str | None] = mapped_column(String(100))
     error: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    # Follow-ups: [{"days": 5, "subject": "", "body": "..."}], sent `days` after the previous email while nobody replies.
+    followups: Mapped[list] = mapped_column(JSONB, default=list)
+    followups_sent: Mapped[int] = mapped_column(Integer, default=0)  # steps done or skipped
+    followup_errors: Mapped[int] = mapped_column(Integer, default=0)
+    followup_note: Mapped[str | None] = mapped_column(Text)
+    followup_claim_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # set while a follow-up is being sent
+    followup_retry_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_contact_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)  # latest email of any kind
+    sent_subject: Mapped[str] = mapped_column(String(300), default="")
+    rfc_id: Mapped[str] = mapped_column(String(300), default="")  # Message-ID header of the latest email
+    outcome: Mapped[str] = mapped_column(String(10), default="")  # "", "replied" or "bounced"
+    checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # last look for a reply
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
