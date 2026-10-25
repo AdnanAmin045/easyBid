@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { FollowUpsEditor } from "@/components/followups-editor";
 import { Button, Card, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import { api, useApi, type CampaignInput, type OutreachTemplate, type Resume } from "@/lib/api";
 
@@ -21,6 +22,7 @@ export const EMPTY_CAMPAIGN: CampaignInput = {
   timezone: "UTC",
   weekdays_only: true,
   ramp_up: true,
+  followups: [],
 };
 
 const BUILTIN = ["first_name", "name", "company", "email"];
@@ -229,7 +231,14 @@ export function CampaignForm({
             <Textarea rows={2} maxLength={1000} value={c.footer} onChange={(e) => update({ footer: e.target.value })} />
           </Field>
           <div className="space-y-4">
-            <Field label="Attachment">
+            <Field
+              label="Attach a CV"
+              hint={
+                resumes && resumes.length === 0
+                  ? "No CV uploaded yet. Upload one in Jobs > Profile & CVs, then choose it here."
+                  : "Sent with the first email only, not with follow-ups. Choose “No attachment” to send none."
+              }
+            >
               <Select value={c.resume_id ?? ""} onChange={(e) => update({ resume_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">No attachment</option>
                 {resumes?.map((r) => (
@@ -243,6 +252,13 @@ export function CampaignForm({
           </div>
         </div>
       </Card>
+
+      <FollowUpsEditor
+        kind="campaign"
+        value={c.followups}
+        onChange={(followups) => update({ followups })}
+        variables="Variables like {{first_name|there}} and your list's columns work here too."
+      />
 
       <Card title="Pace and schedule">
         <p className="mb-4 text-sm text-stone-500">

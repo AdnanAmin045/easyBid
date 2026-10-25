@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, gmailThreadUrl, timeAgo, useApi, type Application, type JobSettings, type Resume } from "@/lib/api";
+import { FollowUpsEditor } from "@/components/followups-editor";
+import { api, gmailThreadUrl, timeAgo, useApi, type Application, type FollowUp, type JobSettings, type Resume } from "@/lib/api";
 
 function Editor({ initial, onChanged }: { initial: Application; onChanged: (a: Application) => void }) {
   const router = useRouter();
@@ -178,6 +179,61 @@ function SentView({ app }: { app: Application }) {
   );
 }
 
+function FollowUps({ app, onChanged }: { app: Application; onChanged: (a: Application) => void }) {
+  const [plan, setPlan] = useState<FollowUp[]>(app.followups);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const dirty = JSON.stringify(plan) !== JSON.stringify(app.followups);
+  const sent = app.status === "sent";
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      onChanged(await api<Application>(`/jobs/applications/${app.id}/followups`, { method: "PUT", body: { followups: plan } }));
+      setSaved(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="space-y-3">
+      {sent && app.outcome === "replied" && <Notice tone="green">They replied. No more follow-ups will be sent.</Notice>}
+      {sent && app.outcome === "bounced" && <Notice>This email bounced. The address was added to the do-not-contact list.</Notice>}
+      {sent && !app.outcome && app.followups.length > 0 && (
+        <Notice tone="green">
+          {app.followups_sent >= app.followups.length
+            ? "All follow-ups have been sent."
+            : `Follow-up ${app.followups_sent + 1} of ${app.followups.length} goes ${app.followups[app.followups_sent].days} days after the last email, if nobody has replied.`}{" "}
+          {app.followups_sent > 0 && `${app.followups_sent} done.`}
+        </Notice>
+      )}
+      {app.followup_note && <Notice tone="amber">{app.followup_note}</Notice>}
+      <FollowUpsEditor
+        kind="job"
+        title={sent ? "Follow-ups" : "Follow-ups after sending"}
+        value={plan}
+        onChange={(next) => {
+          setPlan(next);
+          setSaved(false);
+        }}
+        variables="Variables: {{role}}, {{company}}, {{first_name}}, {{name}}."
+      />
+      <Notice>{error}</Notice>
+      <div className="flex items-center gap-3">
+        <Button variant="primary" loading={busy} disabled={busy || !dirty} onClick={save}>
+          {busy ? "Saving…" : "Save follow-ups"}
+        </Button>
+        {saved && !dirty && <span className="text-sm text-emerald-700">Saved.</span>}
+        {!sent && <span className="text-xs text-stone-500">They start counting when the email is sent.</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function ApplicationPage() {
   const { id } = useParams<{ id: string }>();
   const { data, error } = useApi<Application>(`/jobs/applications/${id}`);
@@ -197,6 +253,7 @@ export default function ApplicationPage() {
         action={
           <div className="flex items-center gap-3">
             <Badge>{app.status}</Badge>
+            {app.outcome && <Badge>{app.outcome}</Badge>}
             <Link href="/jobs/applications" className="text-sm font-medium text-stone-600 hover:text-stone-900">
               All applications
             </Link>
@@ -207,7 +264,10 @@ export default function ApplicationPage() {
       {app.status === "sent" && <Notice tone="green">Sent {timeAgo(app.sent_at)} from your Gmail.</Notice>}
 
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-        {app.status === "draft" || app.status === "failed" ? <Editor key={app.id} initial={app} onChanged={setCurrent} /> : <SentView app={app} />}
+        <div className="min-w-0 space-y-6">
+          {app.status === "draft" || app.status === "failed" ? <Editor key={app.id} initial={app} onChanged={setCurrent} /> : <SentView app={app} />}
+          <FollowUps key={`${app.id}:${app.followups_sent}`} app={app} onChanged={setCurrent} />
+        </div>
 
         <div className="space-y-6">
           <Card title="From the posting">

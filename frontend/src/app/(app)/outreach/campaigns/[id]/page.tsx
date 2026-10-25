@@ -13,6 +13,7 @@ import {
   gmailThreadUrl,
   timeAgo,
   totalCount,
+  upload,
   useApi,
   usePaged,
   type Campaign,
@@ -28,6 +29,7 @@ const STATUSES = ["", "pending", "sent", "replied", "bounced", "failed", "skippe
 
 function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }) {
   const [text, setText] = useState("");
+  const [excel, setExcel] = useState<File | null>(null);
   const [skipRecent, setSkipRecent] = useState(true);
   const [checkDomains, setCheckDomains] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -36,9 +38,15 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
 
   async function readFile(file: File | undefined) {
     if (!file) return;
-    if (file.size > 3_000_000) return setError("The file is larger than 3 MB. Split it and import in parts.");
+    if (file.size > 5_000_000) return setError("The file is larger than 5 MB. Split it and import in parts.");
     setError("");
-    setText(await file.text());
+    if (file.name.toLowerCase().endsWith(".xlsx")) {
+      setExcel(file);
+      setText("");
+    } else {
+      setExcel(null);
+      setText(await file.text());
+    }
   }
 
   async function run() {
@@ -46,12 +54,22 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
     setError("");
     setResult(null);
     try {
-      const done = await api<ImportResult>(`/outreach/campaigns/${campaign.id}/recipients/import`, {
-        method: "POST",
-        body: { text, skip_recent: skipRecent, check_domains: checkDomains },
-      });
+      let done: ImportResult;
+      if (excel) {
+        const form = new FormData();
+        form.append("file", excel);
+        form.append("skip_recent", String(skipRecent));
+        form.append("check_domains", String(checkDomains));
+        done = await upload<ImportResult>(`/outreach/campaigns/${campaign.id}/recipients/import-file`, form);
+      } else {
+        done = await api<ImportResult>(`/outreach/campaigns/${campaign.id}/recipients/import`, {
+          method: "POST",
+          body: { text, skip_recent: skipRecent, check_domains: checkDomains },
+        });
+      }
       setResult(done);
       setText("");
+      setExcel(null);
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -63,20 +81,25 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
     <Card title="Add recipients">
       <Notice>{error}</Notice>
       <p className="mb-3 text-sm text-stone-600">
-        Paste email addresses in any form, or a sheet with a header row. Columns <b>email</b>, <b>name</b>, <b>company</b> are recognised; any other column becomes a <code>{"{{variable}}"}</code>. Add{" "}
-        <b>subject</b> and <b>body</b> columns when you have already written each email: those are sent exactly as they are.
+        Paste email addresses in any form, or upload an Excel (.xlsx) or CSV file. Columns <b>email</b>, <b>name</b>, <b>company</b> are recognised; any other column becomes a{" "}
+        <code>{"{{variable}}"}</code>. <b>Already written your emails?</b> Use two columns, the address and the whole email: they are sent exactly as written. A first line like{" "}
+        <code>Subject: Hello</code> becomes the subject; a <b>subject</b> column works too.
       </p>
       <Textarea
         rows={7}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          setExcel(null);
+        }}
         className="font-mono text-xs"
+        disabled={Boolean(excel)}
         placeholder={"email,name,company\nann@acme.com,Ann Lee,Acme\nbob@globex.com,Bob Stone,Globex"}
         aria-label="Recipients"
       />
       <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
         <label className="inline-flex items-center gap-2">
-          <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" onChange={(e) => readFile(e.target.files?.[0])} className="max-w-56 text-xs" aria-label="Upload a CSV file" />
+          <input type="file" accept=".xlsx,.csv,.tsv,.txt,text/csv,text/plain" onChange={(e) => readFile(e.target.files?.[0])} className="max-w-56 text-xs" aria-label="Upload an Excel or CSV file" />
         </label>
         <label className="inline-flex items-center gap-2">
           <input type="checkbox" checked={skipRecent} onChange={(e) => setSkipRecent(e.target.checked)} className="accent-brand-600" />
@@ -86,8 +109,9 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
           <input type="checkbox" checked={checkDomains} onChange={(e) => setCheckDomains(e.target.checked)} className="accent-brand-600" />
           Check that the domain can receive mail
         </label>
+        {excel && <span className="font-mono text-xs text-stone-600">{excel.name} ready</span>}
         <span className="flex-1" />
-        <Button variant="primary" loading={busy} disabled={text.trim().length < 3} onClick={run}>
+        <Button variant="primary" loading={busy} disabled={!excel && text.trim().length < 3} onClick={run}>
           {busy ? "Importing…" : "Add to campaign"}
         </Button>
       </div>
@@ -121,7 +145,8 @@ function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign
   const [form, setForm] = useState({ email: recipient.email, name: recipient.name, company: recipient.company, subject: recipient.subject, body: recipient.body });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const preview = useApi<EmailPreview>(`/outreach/campaigns/${campaign.id}/preview?recipient_id=${recipient.id}`);
+  const [step, setStep] = useState(0);
+  const preview = useApi<EmailPreview>(`/outreach/campaigns/${campaign.id}/preview?recipient_id=${recipient.id}&step=${step}`);
   const base = `/outreach/campaigns/${campaign.id}/recipients/${recipient.id}`;
   const dirty = (Object.keys(form) as (keyof typeof form)[]).some((k) => form[k] !== recipient[k]);
   const heldRecently = recipient.status === "skipped" && (recipient.error ?? "").startsWith("Already");
@@ -152,7 +177,19 @@ function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign
   return (
     <div className="grid gap-5 bg-stone-50 p-4 lg:grid-cols-2">
       <div>
-        <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-stone-500">Exactly what they get</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-stone-500">Exactly what they get</p>
+          {campaign.followups.length > 0 && (
+            <Select aria-label="Which email" className="!w-48 !py-1 text-xs" value={step} onChange={(e) => setStep(Number(e.target.value))}>
+              <option value={0}>First email</option>
+              {campaign.followups.map((f, i) => (
+                <option key={i} value={i + 1}>
+                  Follow-up {i + 1} (after {f.days} d)
+                </option>
+              ))}
+            </Select>
+          )}
+        </div>
         {preview.error && <Notice>{preview.error}</Notice>}
         {preview.data && (
           <div className="rounded-[10px] border border-stone-200 bg-white p-3 text-sm">
@@ -290,7 +327,7 @@ function RecipientRow({ campaign, recipient: r, open, onToggle, onChanged }: { c
           </button>
           <span className="block truncate text-xs text-stone-500">{[r.name, r.company].filter(Boolean).join(" · ") || "No name"}</span>
         </td>
-        <td className="hidden max-w-sm truncate px-3 py-2.5 text-xs text-stone-500 md:table-cell">{r.error ?? (r.body ? "Has its own message" : "")}</td>
+        <td className="hidden max-w-sm truncate px-3 py-2.5 text-xs text-stone-500 md:table-cell">{r.error ?? (r.status === "sent" && campaign.followups.length > 0 ? `Follow-ups: ${r.followups_sent} of ${campaign.followups.length} sent` : r.body ? "Has its own message" : "")}</td>
         <td className="px-3 py-2.5">
           <Badge>{r.status}</Badge>
         </td>
@@ -405,7 +442,12 @@ export default function CampaignPage() {
       <Notice tone="green">{notice}</Notice>
       {campaign.status === "paused" && campaign.pause_reason && <Notice tone="amber">{campaign.pause_reason}</Notice>}
       {running && campaign.waiting && <Notice tone="amber">Waiting: {campaign.waiting}</Notice>}
-      {running && !campaign.waiting && <Notice tone="green">Sending. The next email goes out after a random pause{campaign.next_send_at ? `, around ${new Date(campaign.next_send_at).toLocaleTimeString()}` : ""}.</Notice>}
+      {running && !campaign.waiting && (campaign.counts.pending ?? 0) === 0 && campaign.followups_scheduled > 0 && (
+        <Notice tone="green">
+          Everyone has had the first email. {campaign.followups_scheduled} {campaign.followups_scheduled === 1 ? "person is" : "people are"} waiting for a follow-up; they go out on their own, and the campaign finishes after the last one.
+        </Notice>
+      )}
+      {running && !campaign.waiting && ((campaign.counts.pending ?? 0) > 0 || campaign.followups_scheduled === 0) && <Notice tone="green">Sending. The next email goes out after a random pause{campaign.next_send_at ? `, around ${new Date(campaign.next_send_at).toLocaleTimeString()}` : ""}.</Notice>}
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
         {(campaign.status === "draft" || campaign.status === "paused" || campaign.status === "completed") && (
@@ -439,7 +481,7 @@ export default function CampaignPage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat label="Waiting" value={campaign.counts.pending ?? 0} accent />
-        <Stat label="Sent" value={delivered} hint={`${campaign.sent_24h} in 24 h`} />
+        <Stat label="Sent" value={delivered} hint={`${campaign.sent_24h} in 24 h${campaign.followups.length ? `, ${campaign.followups_sent} follow-ups` : ""}`} />
         <Stat label="Replied" value={campaign.counts.replied ?? 0} />
         <Stat label="Bounced" value={campaign.counts.bounced ?? 0} />
         <Stat label="Failed" value={campaign.counts.failed ?? 0} />

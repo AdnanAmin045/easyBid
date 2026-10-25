@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { FollowUpsEditor } from "@/components/followups-editor";
 import { Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
 import { api, useApi, type GmailStatus, type JobSettings } from "@/lib/api";
 
@@ -144,6 +145,14 @@ function SettingsForm({ initial }: { initial: JobSettings }) {
           <Field label="Maximum characters">{num("email_max_chars", { min: 300, max: 10000 })}</Field>
         </div>
       </Card>
+
+      <FollowUpsEditor
+        kind="job"
+        title="Default follow-ups"
+        value={s.default_followups}
+        onChange={(default_followups) => update({ default_followups })}
+        variables="Every new application starts with these; you can change them on each application. Variables: {{role}}, {{company}}, {{first_name}}."
+      />
 
       <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t border-stone-300/70 bg-canvas/95 px-4 py-3 md:-mx-8 md:px-8">
         <Button variant="primary" loading={busy} onClick={save}>

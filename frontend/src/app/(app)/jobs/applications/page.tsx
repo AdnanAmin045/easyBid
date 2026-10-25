@@ -63,7 +63,10 @@ export default function ApplicationsPage() {
                     </td>
                     <td className="max-w-[16rem] truncate px-4 py-3 text-stone-700">{a.to_email}</td>
                     <td className="px-4 py-3">
-                      <Badge>{a.status}</Badge>
+                      <span className="flex flex-wrap gap-1">
+                        <Badge>{a.status}</Badge>
+                        {a.outcome && <Badge>{a.outcome}</Badge>}
+                      </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-stone-500">
                       {a.sent_at ? `sent ${timeAgo(a.sent_at)}` : `created ${timeAgo(a.created_at)}`}

@@ -376,6 +376,7 @@ export interface ApplicationBrief {
   error: string | null;
   sent_at: string | null;
   created_at: string;
+  outcome: "" | "replied" | "bounced";
 }
 
 export interface Application extends ApplicationBrief {
@@ -388,6 +389,10 @@ export interface Application extends ApplicationBrief {
   prompt_id: number | null;
   model: string;
   gmail_thread_id: string | null;
+  followups: FollowUp[];
+  followups_sent: number;
+  followup_note: string | null;
+  last_contact_at: string | null;
 }
 
 export interface JobSettings {
@@ -398,6 +403,7 @@ export interface JobSettings {
   email_min_chars: number;
   email_max_chars: number;
   duplicate_window_days: number;
+  default_followups: FollowUp[];
 }
 
 export interface GmailStatus {
@@ -471,6 +477,12 @@ export function gmailThreadUrl(threadId: string): string {
 export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
 export type RecipientStatus = "pending" | "sending" | "sent" | "replied" | "bounced" | "failed" | "skipped";
 
+export interface FollowUp {
+  days: number;
+  subject: string;
+  body: string;
+}
+
 export interface CampaignInput {
   name: string;
   mode: "template" | "ai";
@@ -488,6 +500,7 @@ export interface CampaignInput {
   timezone: string;
   weekdays_only: boolean;
   ramp_up: boolean;
+  followups: FollowUp[];
 }
 
 export interface CampaignListItem {
@@ -506,6 +519,8 @@ export interface Campaign extends CampaignListItem, CampaignInput {
   resume: Resume | null;
   next_send_at: string | null;
   sent_24h: number;
+  followups_sent: number;
+  followups_scheduled: number;
   waiting: string | null;
   columns: string[];
 }
@@ -522,6 +537,8 @@ export interface OutreachRecipient {
   attempts: number;
   error: string | null;
   sent_at: string | null;
+  last_contact_at: string | null;
+  followups_sent: number;
   gmail_thread_id: string | null;
   created_at: string;
 }
@@ -552,6 +569,7 @@ export interface EmailPreview {
   body: string;
   missing: string[];
   own_content: boolean;
+  step: number;
 }
 
 export interface OutreachTemplate {
