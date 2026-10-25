@@ -11,7 +11,7 @@ export function newFollowUp(index: number, kind: "campaign" | "job"): FollowUp {
     kind === "job"
       ? "Hello,\n\nI wanted to follow up on my application for the {{role|open}} role at {{company|your company}}. I remain very interested and would be glad to talk whenever suits you.\n\n"
       : "{Hi|Hello} {{first_name|there}},\n\nJust following up on my last email in case it got buried.\n\n";
-  return { days: index === 0 ? (kind === "job" ? 5 : 3) : 4, subject: "", body };
+  return { days: index === 0 ? (kind === "job" ? 5 : 3) : 4, subject: "", body, attach_resume: false };
 }
 
 /**
@@ -71,6 +71,13 @@ export function FollowUpsEditor({
                   <Field label="Message">
                     <Textarea rows={6} value={f.body} onChange={(e) => set({ body: e.target.value })} />
                   </Field>
+                  <label className="flex items-start gap-2.5 text-sm">
+                    <input type="checkbox" checked={f.attach_resume} onChange={(e) => set({ attach_resume: e.target.checked })} className="mt-0.5 h-4 w-4 rounded border-stone-300 accent-brand-600" />
+                    <span>
+                      <span className="font-medium text-stone-800">Attach the CV to this follow-up</span>
+                      <span className="block text-xs text-stone-500">{kind === "job" ? "Uses the CV chosen for the application." : "Uses the CV chosen for the campaign."}</span>
+                    </span>
+                  </label>
                 </div>
               </div>
             );

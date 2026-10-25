@@ -14,6 +14,7 @@ export const EMPTY_CAMPAIGN: CampaignInput = {
   footer: "",
   append_signature: true,
   resume_id: null,
+  attach_first: true,
   min_delay_seconds: 45,
   max_delay_seconds: 150,
   daily_limit: 40,
@@ -236,10 +237,10 @@ export function CampaignForm({
               hint={
                 resumes && resumes.length === 0
                   ? "No CV uploaded yet. Upload one in Jobs > Profile & CVs, then choose it here."
-                  : "Sent with the first email only, not with follow-ups. Choose “No attachment” to send none."
+                  : "The CV used by the switches below, and by any follow-up set to carry it."
               }
             >
-              <Select value={c.resume_id ?? ""} onChange={(e) => update({ resume_id: e.target.value ? Number(e.target.value) : null })}>
+              <Select value={c.resume_id ?? ""} onChange={(e) => update({ resume_id: e.target.value ? Number(e.target.value) : null, attach_first: true })}>
                 <option value="">No attachment</option>
                 {resumes?.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -248,6 +249,12 @@ export function CampaignForm({
                 ))}
               </Select>
             </Field>
+            <Check
+              label="Attach the CV to the first email"
+              hint={c.resume_id ? undefined : "Choose a CV above first."}
+              checked={c.attach_first && c.resume_id !== null}
+              onChange={(v) => update({ attach_first: v })}
+            />
             <Check label="Add my signature" hint="From Jobs settings. Turn off when your own messages already end with a signature." checked={c.append_signature} onChange={(v) => update({ append_signature: v })} />
           </div>
         </div>

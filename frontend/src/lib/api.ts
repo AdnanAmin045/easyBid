@@ -481,6 +481,7 @@ export interface FollowUp {
   days: number;
   subject: string;
   body: string;
+  attach_resume: boolean;
 }
 
 export interface CampaignInput {
@@ -492,6 +493,7 @@ export interface CampaignInput {
   footer: string;
   append_signature: boolean;
   resume_id: number | null;
+  attach_first: boolean;
   min_delay_seconds: number;
   max_delay_seconds: number;
   daily_limit: number;
