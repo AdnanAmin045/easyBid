@@ -1,7 +1,7 @@
 """HTTP API of the Jobs service, under /api/jobs."""
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 from urllib.parse import quote
 
@@ -19,6 +19,8 @@ from app.jobs.gmail import Attachment, GmailClient, GmailError
 from app.jobs.models import ApplicationStatus, JobApplication, JobProfileItem, JobPrompt, JobResume
 from app.jobs.writer import DEFAULT_PROMPT, email_problem, write_email
 from app.models import utcnow
+from app.outreach import engine as outreach_engine
+from app.outreach.models import Recipient
 from app.pagination import Page, PageParams, contains, paginate
 from app.security import require_user
 from app.services import store
@@ -94,6 +96,15 @@ async def previous_application(
     if exclude_id is not None:
         query = query.where(JobApplication.id != exclude_id)
     return await session.scalar(query)
+
+
+async def campaign_contact(session: AsyncSession, email: str, days: int) -> datetime | None:
+    """When an outreach campaign last emailed this address, within `days`."""
+    if days <= 0:
+        return None
+    return await session.scalar(
+        select(func.max(Recipient.sent_at)).where(Recipient.email == email.lower(), Recipient.sent_at >= utcnow() - timedelta(days=days))
+    )
 
 
 def _log(session: AsyncSession, event: str, message: str, level: str = "info") -> None:
@@ -218,7 +229,8 @@ async def extract(body: schemas.ExtractIn, session: AsyncSession = Depends(get_s
     result = await extraction.extract(body.text, js.llm, s.model, js.lookup)
     for check in result.emails:
         previous = await previous_application(session, check.email, result.company, s.duplicate_window_days)
-        check.applied_before = previous.sent_at if previous else None
+        written = await campaign_contact(session, check.email, s.duplicate_window_days)
+        check.applied_before = max(filter(None, [previous.sent_at if previous else None, written]), default=None)
     return result
 
 
@@ -400,6 +412,15 @@ async def send_application(
                 409,
                 f"duplicate: you applied to {previous.company or previous.to_email} on {previous.sent_at:%d %b %Y}. "
                 "Send anyway to confirm.",
+            )
+        written = await campaign_contact(session, application.to_email, s.duplicate_window_days)
+        if written:
+            raise HTTPException(
+                409, f"duplicate: an outreach campaign already emailed {application.to_email} on {written:%d %b %Y}. Send anyway to confirm."
+            )
+        if await outreach_engine.replied_before(session, [application.to_email.lower()]):
+            raise HTTPException(
+                409, f"duplicate: {application.to_email} already replied to an earlier email of yours. Send anyway to confirm."
             )
 
     # Claim it, so a double click or a second tab can never send the same email twice.
