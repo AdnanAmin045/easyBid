@@ -143,10 +143,24 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         settle("On the do-not-contact list, no follow-ups")
         await session.commit()
         return False
+    if await engine.replied_before(session, [application.to_email.lower()]):
+        # They answered something else of ours (a campaign, or another application): no more follow-ups.
+        settle(application.followup_note)
+        await _mark_outcome(session, application, RecipientStatus.REPLIED)
+        await session.commit()
+        return False
     try:
         refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
-        # Never follow up blind: look at the conversation first.
-        outcome = engine.classify_thread(await js.gmail.thread(refresh, application.gmail_thread_id), account["email"], application.gmail_message_id)
+        # Never follow up blind: look at the conversation, and at anything else they have written, first.
+        outcome = await engine.thread_outcome(
+            js,
+            refresh,
+            account["email"],
+            application.gmail_thread_id,
+            application.gmail_message_id,
+            application.to_email,
+            application.sent_at,
+        )
     except GmailError as e:
         settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
         await session.commit()
@@ -251,6 +265,13 @@ async def check_replies(js, now: datetime) -> None:
                 logger.warning("Could not read thread %s: %s", application.gmail_thread_id, e)
                 continue
             outcome = engine.classify_thread(messages, account["email"], application.gmail_message_id)
+            if outcome is None:
+                try:
+                    if await js.gmail.answered_by(refresh, application.to_email, application.sent_at):
+                        outcome = RecipientStatus.REPLIED
+                except GmailError as e:
+                    logger.warning("Could not look for answers from %s: %s", application.to_email, e)
+                    continue
             if outcome:
                 await _mark_outcome(session, application, outcome)
         await session.commit()
