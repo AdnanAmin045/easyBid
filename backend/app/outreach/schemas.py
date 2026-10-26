@@ -22,6 +22,33 @@ class OutreachSettings(BaseModel):
     bounce_pause_percent: int = Field(8, ge=1, le=100)
     model: str = "gemini-3.5-flash"
 
+    # What a new campaign starts with. Each campaign keeps its own copy, so changing these never touches a running one.
+    default_min_delay_seconds: int = Field(45, ge=15, le=3600)
+    default_max_delay_seconds: int = Field(150, ge=15, le=7200)
+    default_campaign_daily_limit: int = Field(40, ge=1, le=400)
+    default_window_start_hour: int = Field(9, ge=0, le=23)
+    default_window_end_hour: int = Field(18, ge=1, le=24)
+    default_timezone: str = "UTC"
+    default_weekdays_only: bool = True
+    default_ramp_up: bool = True
+
+    @field_validator("default_timezone")
+    @classmethod
+    def known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"Unknown time zone '{value}'. Use a name such as Asia/Karachi or Europe/London") from None
+        return value
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.default_max_delay_seconds < self.default_min_delay_seconds:
+            raise ValueError("The longest wait must not be shorter than the shortest wait")
+        if self.default_window_end_hour <= self.default_window_start_hour:
+            raise ValueError("The sending window must end after it starts")
+        return self
+
 
 class CampaignIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
