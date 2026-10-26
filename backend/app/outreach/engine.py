@@ -190,6 +190,38 @@ async def contacted_recently(session: AsyncSession, email: str, days: int, exclu
     return (await recent_contacts(session, [email], days, exclude_recipient)).get(email)
 
 
+async def replied_before(session: AsyncSession, emails: list[str], exclude_recipient: int | None = None) -> dict[str, str]:
+    """For each address that has already answered us, in any campaign or Jobs application, a sentence saying so.
+
+    An answer is a reason to stop writing, wherever it came in, so this is not limited to a time window.
+    """
+    found: dict[str, str] = {}
+    for i in range(0, len(emails), 1000):
+        chunk = emails[i : i + 1000]
+        query = select(Recipient.email).where(Recipient.email.in_(chunk), Recipient.status == RecipientStatus.REPLIED)
+        if exclude_recipient is not None:
+            query = query.where(Recipient.id != exclude_recipient)
+        for email in await session.scalars(query):
+            found[email] = "Already replied to an earlier email"
+        applications = select(func.lower(JobApplication.to_email)).where(
+            func.lower(JobApplication.to_email).in_(chunk), JobApplication.outcome == RecipientStatus.REPLIED
+        )
+        for email in await session.scalars(applications):
+            found.setdefault(email, "Already replied to a job application (Jobs)")
+    return found
+
+
+async def thread_outcome(js, refresh: str, my_email: str, thread_id: str, sent_id: str | None, to: str, since: datetime) -> str | None:
+    """REPLIED or BOUNCED for a sent email: the answer may be in its thread, or in a new conversation from the same address.
+
+    Raises GmailError when Gmail cannot be read, so callers never act on a guess.
+    """
+    outcome = classify_thread(await js.gmail.thread(refresh, thread_id), my_email, sent_id)
+    if outcome is None and await js.gmail.answered_by(refresh, to, since):
+        outcome = RecipientStatus.REPLIED
+    return outcome
+
+
 async def is_suppressed(session: AsyncSession, email: str) -> bool:
     return await session.scalar(select(Suppression.id).where(Suppression.email == email)) is not None
 
@@ -315,6 +347,13 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         await session.commit()
         return False
 
+    if await replied_before(session, [recipient.email], exclude_recipient=recipient.id):
+        # They answered another email of ours (another campaign, or a job application): no more follow-ups.
+        settle()
+        recipient.status = RecipientStatus.REPLIED
+        await session.commit()
+        return False
+
     account = await store.get_config(session, GMAIL_KEY)
     if not account:
         settle()
@@ -323,8 +362,10 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         return False
     try:
         refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
-        # Never follow up blind: look at the conversation first.
-        outcome = classify_thread(await js.gmail.thread(refresh, recipient.gmail_thread_id), account["email"], recipient.gmail_message_id)
+        # Never follow up blind: look at the conversation, and at anything else they have written, first.
+        outcome = await thread_outcome(
+            js, refresh, account["email"], recipient.gmail_thread_id, recipient.gmail_message_id, recipient.email, recipient.sent_at
+        )
     except GmailError as e:
         settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
         await session.commit()
@@ -451,7 +492,8 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         await session.commit()
         return False
     if not recipient.allow_recent:
-        reason = await contacted_recently(session, recipient.email, s.skip_recent_days, exclude_recipient=recipient.id)
+        reason = (await replied_before(session, [recipient.email], exclude_recipient=recipient.id)).get(recipient.email)
+        reason = reason or await contacted_recently(session, recipient.email, s.skip_recent_days, exclude_recipient=recipient.id)
         if reason:
             recipient.status, recipient.error = RecipientStatus.SKIPPED, reason
             _release(campaign)
@@ -652,6 +694,13 @@ async def check_replies(js, now: datetime) -> None:
                 logger.warning("Could not read thread %s: %s", recipient.gmail_thread_id, e)
                 continue
             outcome = classify_thread(messages, account["email"], recipient.gmail_message_id)
+            if outcome is None:
+                try:
+                    if await js.gmail.answered_by(refresh, recipient.email, recipient.sent_at):
+                        outcome = RecipientStatus.REPLIED
+                except GmailError as e:
+                    logger.warning("Could not look for answers from %s: %s", recipient.email, e)
+                    continue
             if outcome == RecipientStatus.BOUNCED:
                 recipient.status, recipient.error = RecipientStatus.BOUNCED, "Gmail could not deliver this email"
                 if not await is_suppressed(session, recipient.email):

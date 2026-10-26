@@ -483,7 +483,11 @@ async def _add_recipients(
 
     s = await engine.outreach_settings(session)
     suppressed = set(await session.scalars(select(Suppression.email).where(Suppression.email.in_([r.email for r in rows])))) if rows else set()
-    recent = await engine.recent_contacts(session, [r.email for r in rows], s.skip_recent_days) if skip_recent else {}
+    recent = {}
+    if skip_recent:
+        addresses = [r.email for r in rows]
+        recent = await engine.recent_contacts(session, addresses, s.skip_recent_days)
+        recent.update(await engine.replied_before(session, addresses))  # an answer outweighs "written to recently"
 
     bad_domains: dict[str, str] = {}
     if check_domains and rows:
