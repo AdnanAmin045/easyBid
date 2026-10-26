@@ -116,12 +116,12 @@ Only the refresh token is stored, encrypted with a key derived from `SECRET_KEY`
 - Every recipient is checked before sending: address format, a mail server for the domain, no throwaway inboxes.
 - A warning before writing again to an address or company applied to recently.
 - Nothing is sent without you pressing Send, and the same email can never go out twice.
-- **Follow-ups for applications**: on any application (or as defaults in Jobs settings) add up to 5 follow-ups, each some days after the previous email. They go in the same Gmail thread under the same account limits, only while nobody has replied; the conversation is read first. Replies and bounces are shown on the application, and a bounced address joins the do-not-contact list.
+- **Follow-ups for applications**: on any application (or as defaults in Email settings) add up to 5 follow-ups, each some days after the previous email. They go in the same Gmail thread under the same account limits, only while nobody has replied; the conversation is read first. Replies and bounces are shown on the application, and a bounced address joins the do-not-contact list.
 - The AI may only claim what is in Jobs > Profile & CVs, and never adds an address that is not in the job description.
 
 ## Outreach service
 
-Lives in `backend/app/outreach/` (tables `outreach_*`, API `/api/outreach/...`, pages `/outreach/...`). It uses the Gmail connection and signature from Jobs settings. The sender runs inside the web process, every 10 seconds; every claim is a database compare-and-set, so a second instance never sends the same email twice. Apply the migration with `alembic upgrade head` (the Dockerfile does it on start).
+Lives in `backend/app/outreach/` (tables `outreach_*`, API `/api/outreach/...`, pages `/outreach/...`). It uses the Gmail connection and signature from Email settings. Account limits, the schedule new campaigns start with, and every Jobs limit are on that one page (/email-settings). The sender runs inside the web process, every 10 seconds; every claim is a database compare-and-set, so a second instance never sends the same email twice. Apply the migration with `alembic upgrade head` (the Dockerfile does it on start).
 
 **Two ways to write**
 - *Template*: one subject and message with `{{first_name|there}}`, `{{company}}` and any column of your sheet, plus `{Hi|Hello}` wording options chosen per person. Write it by hand, pick a saved one, or let the AI write it from a short brief.

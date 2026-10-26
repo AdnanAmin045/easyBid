@@ -3,7 +3,7 @@ import base64
 import csv
 import io
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from email import message_from_bytes, policy
 
 import httpx
@@ -793,3 +793,25 @@ def test_columns_in_any_order_are_told_apart_by_content():
 
     # Addresses spread over several columns are still just a list.
     assert [r.email for r in importer.parse("a@x.io\tb@y.io\nc@z.io\td@w.io").rows] == ["a@x.io", "b@y.io", "c@z.io", "d@w.io"]
+
+
+async def test_new_campaign_defaults_are_kept_in_settings_and_validated(outreach):
+    client, _ = outreach
+    saved = (await client.get("/api/outreach/settings")).json()
+    assert saved["default_window_start_hour"] == 9 and saved["default_timezone"] == "UTC"  # the old behaviour until changed
+
+    changed = {**saved, "default_timezone": "Asia/Karachi", "default_window_start_hour": 8, "default_window_end_hour": 20, "default_weekdays_only": False}
+    res = await client.put("/api/outreach/settings", json=changed)
+    assert res.status_code == 200 and (await client.get("/api/outreach/settings")).json()["default_timezone"] == "Asia/Karachi"
+
+    assert (await client.put("/api/outreach/settings", json={**changed, "default_timezone": "Mars/Base"})).status_code == 422
+    assert (await client.put("/api/outreach/settings", json={**changed, "default_window_end_hour": 8})).status_code == 422
+    assert (await client.put("/api/outreach/settings", json={**changed, "default_max_delay_seconds": 20, "default_min_delay_seconds": 60})).status_code == 422
+
+
+async def test_the_waiting_message_says_which_window_and_time_zone_it_waits_for(outreach):
+    client, js = outreach
+    campaign = await make_campaign(client, window_start_hour=9, window_end_hour=18, timezone="UTC", weekdays_only=True)
+    async with js.sessions() as session:
+        text = engine.window_reason(await session.get(Campaign, campaign["id"]), datetime(2026, 11, 1, 22, 0, tzinfo=timezone.utc))
+    assert "09:00 to 18:00 UTC" in text and "weekdays only" in text and "Sun 22:00" in text and "Next send Mon 09:00" in text
