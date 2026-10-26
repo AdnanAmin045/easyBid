@@ -144,7 +144,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)):
 @router.put("/settings", response_model=schemas.JobSettings)
 async def write_settings(body: schemas.JobSettings, session: AsyncSession = Depends(get_session)):
     await store.set_config(session, SETTINGS_KEY, body.model_dump())
-    _log(session, "settings", "Jobs settings saved")
+    _log(session, "settings", "Email settings saved")
     await session.commit()
     return body
 
@@ -182,7 +182,7 @@ async def gmail_callback(
     env = get_env()
 
     def back(result: str, message: str = "") -> RedirectResponse:
-        target = f"{env.dashboard_url}/jobs/settings?gmail={result}"
+        target = f"{env.dashboard_url}/email-settings?gmail={result}"
         return RedirectResponse(target + (f"&message={quote(message)}" if message else ""), status_code=303)
 
     if not gmail_lib.check_state(state, env.secret_key):
@@ -394,7 +394,7 @@ async def send_application(
 
     account = await store.get_config(session, GMAIL_KEY)
     if not account:
-        raise HTTPException(409, "Connect Gmail in Jobs settings first")
+        raise HTTPException(409, "Connect Gmail in Email settings first")
     if await sent_today(session) >= s.daily_send_limit:
         raise HTTPException(409, f"Daily send limit reached ({s.daily_send_limit}). It resets at 00:00 UTC.")
     problem = email_problem(application.subject, application.body, s)

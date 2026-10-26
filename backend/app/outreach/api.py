@@ -312,7 +312,7 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
     warnings: list[str] = []
 
     if not await store.get_config(session, GMAIL_KEY):
-        blockers.append("Connect Gmail in Jobs settings first.")
+        blockers.append("Connect Gmail in Email settings first.")
     if not pending:
         blockers.append("There is nobody left to send to. Add recipients first.")
 
@@ -691,7 +691,7 @@ async def test_send(
     campaign = await _campaign(session, campaign_id)
     account = await store.get_config(session, GMAIL_KEY)
     if not account:
-        raise HTTPException(409, "Connect Gmail in Jobs settings first")
+        raise HTTPException(409, "Connect Gmail in Email settings first")
     preview_ = await preview(campaign_id, body.recipient_id, 0, session)
     if preview_.missing:
         raise HTTPException(422, "Missing value for: " + ", ".join(preview_.missing))
