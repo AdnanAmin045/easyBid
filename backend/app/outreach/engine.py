@@ -65,7 +65,12 @@ def window_reason(campaign: Campaign, now: datetime) -> str | None:
     local = now.astimezone(ZoneInfo(campaign.timezone))
     if (not campaign.weekdays_only or local.weekday() < 5) and campaign.window_start_hour <= local.hour < campaign.window_end_hour:
         return None
-    return f"Outside the sending window. Next send {next_window_open(campaign, now):%a %H:%M} ({campaign.timezone})"
+    days = "weekdays only, " if campaign.weekdays_only else ""
+    return (
+        f"Outside the sending window ({campaign.window_start_hour:02d}:00 to {campaign.window_end_hour:02d}:00 "
+        f"{campaign.timezone}, {days}it is {local:%a %H:%M} there now). Next send {next_window_open(campaign, now):%a %H:%M}. "
+        "Change the window under Pace and schedule on this campaign"
+    )
 
 
 def daily_allowance(campaign: Campaign, now: datetime) -> int:
