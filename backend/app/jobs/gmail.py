@@ -6,7 +6,7 @@ The refresh token is the only secret kept; it is stored encrypted with a key der
 import base64
 import hashlib
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from urllib.parse import urlencode
@@ -211,6 +211,35 @@ class GmailClient:
         if res.status_code == 404:
             return []
         return (await self._json(res)).get("messages", [])
+
+    async def answered_by(self, refresh_token: str, address: str, since: datetime) -> bool:
+        """Whether `address` wrote to this mailbox after `since`, in any conversation.
+
+        Catches answers that start a new thread or come from a forwarded conversation, which the thread alone misses.
+        Out-of-office and other automatic messages do not count.
+        """
+        token = await self.access_token(refresh_token)
+        headers = {"Authorization": f"Bearer {token}"}
+        query = f"from:{address} after:{int(since.timestamp())}"
+        try:
+            res = await self._http.get(f"{API}/messages", headers=headers, params={"q": query, "maxResults": 10})
+            found = (await self._json(res)).get("messages", [])
+            for item in found:
+                res = await self._http.get(
+                    f"{API}/messages/{item['id']}",
+                    headers=headers,
+                    params=[("format", "metadata"), ("metadataHeaders", "Auto-Submitted"), ("metadataHeaders", "From")],
+                )
+                message = await self._json(res)
+                sent = {h["name"].lower(): h["value"] for h in message.get("payload", {}).get("headers", [])}
+                sender = sent.get("from", "").lower()
+                if "mailer-daemon" in sender or "postmaster" in sender:
+                    continue
+                if sent.get("auto-submitted", "no").strip().lower() in ("", "no"):
+                    return True
+        except httpx.HTTPError as e:
+            raise GmailError(f"Could not reach Google: {e!r}") from e
+        return False
 
     async def revoke(self, refresh_token: str) -> None:
         try:
