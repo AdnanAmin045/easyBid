@@ -56,6 +56,7 @@ class FakeGoogle:
         self.sent: list[dict] = []
         self.revoked: list[str] = []
         self.send_status = 200
+        self.inbox: list[dict] = []  # messages that arrived outside any sent thread: {"id", "from", "auto"?}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -71,6 +72,16 @@ class FakeGoogle:
                 return httpx.Response(self.send_status, json={"error": {"message": "Rate limit"}})
             self.sent.append(json.loads(request.content))
             return httpx.Response(200, json={"id": f"m{len(self.sent)}", "threadId": f"t{len(self.sent)}"})
+        path = request.url.path
+        if path.endswith("/messages") and request.method == "GET":
+            wanted = request.url.params.get("q", "").split("from:", 1)[-1].split()[0].lower()
+            return httpx.Response(200, json={"messages": [{"id": m["id"]} for m in self.inbox if wanted in m["from"].lower()]})
+        if "/messages/" in path and request.method == "GET":
+            message = next(m for m in self.inbox if m["id"] == path.rsplit("/", 1)[1])
+            headers = [{"name": "From", "value": message["from"]}] + (
+                [{"name": "Auto-Submitted", "value": message["auto"]}] if message.get("auto") else []
+            )
+            return httpx.Response(200, json={"id": message["id"], "payload": {"headers": headers}})
         if url.startswith(gmail_lib.REVOKE_URL):
             self.revoked.append(request.content.decode())
             return httpx.Response(200)
