@@ -255,7 +255,7 @@ export function CampaignForm({
               checked={c.attach_first && c.resume_id !== null}
               onChange={(v) => update({ attach_first: v })}
             />
-            <Check label="Add my signature" hint="From Jobs settings. Turn off when your own messages already end with a signature." checked={c.append_signature} onChange={(v) => update({ append_signature: v })} />
+            <Check label="Add my signature" hint="From Email settings. Turn off when your own messages already end with a signature." checked={c.append_signature} onChange={(v) => update({ append_signature: v })} />
           </div>
         </div>
       </Card>

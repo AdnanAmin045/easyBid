@@ -36,7 +36,6 @@ const MODULES: { key: string; label: string; tag: string; items: NavItem[] }[] =
       { href: "/jobs/applications", label: "Applications" },
       { href: "/jobs/prompt", label: "Prompt" },
       { href: "/jobs/profile", label: "Profile & CVs" },
-      { href: "/jobs/settings", label: "Settings" },
     ],
   },
   {
@@ -49,10 +48,12 @@ const MODULES: { key: string; label: string; tag: string; items: NavItem[] }[] =
       { href: "/outreach/campaigns", label: "Campaigns" },
       { href: "/outreach/templates", label: "Templates" },
       { href: "/outreach/suppressions", label: "Do not contact" },
-      { href: "/outreach/settings", label: "Settings" },
     ],
   },
-  { key: "system", label: "System", tag: "SY", items: [{ href: "/logs", label: "Activity log" }] },
+  { key: "system", label: "System", tag: "SY", items: [
+      { href: "/email-settings", label: "Email settings" },
+      { href: "/logs", label: "Activity log" },
+    ] },
 ];
 
 const FREELANCE_ROOTS = ["/queue", "/projects", "/bids", "/prompts", "/profile", "/settings"];

@@ -11,7 +11,7 @@ export default function JobsOverviewPage() {
   if (!data) return <Loading label="Loading jobs overview…" />;
 
   const setup = [
-    { done: data.gmail.connected, text: "Connect your Gmail", href: "/jobs/settings" },
+    { done: data.gmail.connected, text: "Connect your Gmail", href: "/email-settings" },
     { done: data.resumes > 0, text: "Upload a CV", href: "/jobs/profile" },
     { done: data.profile_items > 0, text: "Describe your experience", href: "/jobs/profile" },
     { done: data.prompt_active, text: "Save your own writing prompt (optional, a built-in one is used)", href: "/jobs/prompt" },
@@ -103,7 +103,7 @@ export default function JobsOverviewPage() {
                 <span className="font-medium text-stone-900">Not connected</span>
               </div>
               <p className="mt-2 text-sm text-stone-500">You can write drafts now; sending needs Gmail.</p>
-              <Link href="/jobs/settings" className="mt-3 inline-block text-sm font-medium text-brand-700 hover:underline">
+              <Link href="/email-settings" className="mt-3 inline-block text-sm font-medium text-brand-700 hover:underline">
                 Connect Gmail
               </Link>
             </>

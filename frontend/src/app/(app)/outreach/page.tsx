@@ -27,7 +27,7 @@ export default function OutreachOverviewPage() {
       {!data.gmail.connected && (
         <Notice tone="amber">
           Gmail is not connected, so nothing can be sent.{" "}
-          <Link href="/jobs/settings" className="font-medium underline">
+          <Link href="/email-settings" className="font-medium underline">
             Connect Gmail
           </Link>
         </Notice>

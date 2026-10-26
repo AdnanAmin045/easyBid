@@ -587,7 +587,14 @@ export interface OutreachSettings {
   min_gap_seconds: number;
   skip_recent_days: number;
   bounce_pause_percent: number;
-  model: string;
+  model: string;  default_min_delay_seconds: number;
+  default_max_delay_seconds: number;
+  default_campaign_daily_limit: number;
+  default_window_start_hour: number;
+  default_window_end_hour: number;
+  default_timezone: string;
+  default_weekdays_only: boolean;
+  default_ramp_up: boolean;
 }
 
 export interface Suppression {
