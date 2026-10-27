@@ -25,7 +25,10 @@ class GmailAccount(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)
     # "gmail" sends through the Gmail API with a refresh token; "smtp" through any mailbox with SMTP, and reads
     # replies over IMAP. Secrets are encrypted, see app.jobs.gmail.encrypt.
+    # "alias" is an address added to a Gmail under "Send mail as": emails go out through that Gmail (over HTTPS) with the
+    # alias as the sender, so it shares the Gmail's connection, limits and mailbox. `parent_id` is that Gmail.
     kind: Mapped[str] = mapped_column(String(10), default="gmail")
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("gmail_accounts.id", ondelete="CASCADE"))
     refresh_token: Mapped[str] = mapped_column(Text, default="")
     smtp_host: Mapped[str] = mapped_column(String(255), default="")
     smtp_port: Mapped[int] = mapped_column(Integer, default=465)
