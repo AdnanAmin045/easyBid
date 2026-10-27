@@ -18,10 +18,10 @@ export const EMPTY_CAMPAIGN: CampaignInput = {
   min_delay_seconds: 45,
   max_delay_seconds: 150,
   daily_limit: 40,
-  window_start_hour: 9,
-  window_end_hour: 18,
+  window_start_hour: 0,
+  window_end_hour: 24,
   timezone: "UTC",
-  weekdays_only: true,
+  weekdays_only: false,
   ramp_up: true,
   followups: [],
 };
@@ -288,6 +288,14 @@ export function CampaignForm({
             </div>
             <datalist id="timezones">{typeof Intl.supportedValuesOf === "function" && Intl.supportedValuesOf("timeZone").map((z) => <option key={z} value={z} />)}</datalist>
           </Field>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <Check
+              label="Send around the clock (24 hours)"
+              hint="Emails go out whenever the campaign is running, day or night. Turn off to choose a window."
+              checked={c.window_start_hour === 0 && c.window_end_hour === 24}
+              onChange={(v) => update(v ? { window_start_hour: 0, window_end_hour: 24 } : { window_start_hour: 9, window_end_hour: 18 })}
+            />
+          </div>
           <Field label="Send from (hour)" hint="0 to 23">
             {num("window_start_hour", { min: 0, max: 23 })}
           </Field>

@@ -253,6 +253,14 @@ function OutreachSection({ initial }: { initial: OutreachSettings }) {
             </div>
             <datalist id="settings-timezones">{typeof Intl.supportedValuesOf === "function" && Intl.supportedValuesOf("timeZone").map((z) => <option key={z} value={z} />)}</datalist>
           </Field>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <Check
+              label="Send around the clock (24 hours)"
+              hint="Emails go out whenever a campaign is running, day or night. Turn off to choose a window."
+              checked={s.default_window_start_hour === 0 && s.default_window_end_hour === 24}
+              onChange={(v) => update(v ? { default_window_start_hour: 0, default_window_end_hour: 24 } : { default_window_start_hour: 9, default_window_end_hour: 18 })}
+            />
+          </div>
           <Field label="Send from (hour)" hint="0 to 23">
             {num("default_window_start_hour", { min: 0, max: 23 })}
           </Field>
