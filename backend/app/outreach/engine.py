@@ -462,6 +462,9 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         elif code == 429 or (code == 403 and any(w in text.lower() for w in ("rate", "quota", "limit"))):
             settle()
             await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
+        elif e.unreachable:
+            settle()
+            await _pause(session, [campaign.id], f"{text} Nothing was sent. Fix the connection, then resume.", js.notify)
         elif code is None or code >= 500:
             recipient.followup_errors += 1
             if recipient.followup_errors >= MAX_ATTEMPTS:
@@ -629,6 +632,11 @@ async def _handle_send_error(
     if code == 429 or (code == 403 and any(w in text.lower() for w in ("rate", "quota", "limit"))):
         recipient.status, recipient.attempts, recipient.error = RecipientStatus.PENDING, recipient.attempts - 1, text
         await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
+        return
+    if e.unreachable:
+        # The mail server cannot be reached from here, so every email would fail. Nothing was sent: keep the recipient.
+        recipient.status, recipient.attempts, recipient.error = RecipientStatus.PENDING, recipient.attempts - 1, text
+        await _pause(session, [campaign.id], f"{text} Nothing was sent. Fix the connection, then resume.", js.notify)
         return
     if (code is None or code >= 500) and recipient.attempts < MAX_ATTEMPTS:
         recipient.status, recipient.error = RecipientStatus.PENDING, text

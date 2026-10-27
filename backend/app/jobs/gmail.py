@@ -27,9 +27,11 @@ STATE_TTL = timedelta(minutes=10)
 
 
 class GmailError(Exception):
-    def __init__(self, message: str, status_code: int | None = None, outcome_unknown: bool = False):
+    def __init__(self, message: str, status_code: int | None = None, outcome_unknown: bool = False, unreachable: bool = False):
         super().__init__(message)
         self.status_code = status_code
+        # True when the mail server could not be reached at all. Nothing was sent, and every other email would fail the same way.
+        self.unreachable = unreachable
         # True when the request may have reached Gmail, so sending again could deliver the email twice.
         self.outcome_unknown = outcome_unknown
 

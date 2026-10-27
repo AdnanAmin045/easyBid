@@ -198,6 +198,8 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
             code == 400 and ("revoked" in text or "expired" in text)
         ):
             settle(f"Gmail refused: {text}", retry_in=timedelta(hours=1))
+        elif e.unreachable:
+            settle(f"{text} Will try again.", retry_in=timedelta(hours=1))  # not counted: nothing was sent
         elif code is None or code >= 500:
             application.followup_errors += 1
             if application.followup_errors >= MAX_ERRORS:

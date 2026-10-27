@@ -143,14 +143,14 @@ class SmtpMailbox(Mailbox):
         try:
             conn = self.driver.smtp(s)
         except (OSError, smtplib.SMTPException) as e:
-            raise GmailError(f"Could not reach {s.host}:{s.port}: {e!r}") from e  # nothing was sent, trying later is safe
+            raise GmailError(f"Could not reach {s.host}:{s.port}: {e!r}", unreachable=True) from e  # nothing was sent
         try:
             try:
                 conn.login(s.user, s.password)
             except smtplib.SMTPAuthenticationError as e:
                 raise GmailError(f"{s.user}: the mailbox refused the login ({e.smtp_code}). Check the password in Email settings.", 401) from e
             except (OSError, smtplib.SMTPException) as e:
-                raise GmailError(f"Could not log in to {s.host}: {e!r}") from e
+                raise GmailError(f"Could not log in to {s.host}: {e!r}", unreachable=True) from e
             try:
                 conn.send_message(message)
             except smtplib.SMTPRecipientsRefused as e:
