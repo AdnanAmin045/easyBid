@@ -547,6 +547,7 @@ export interface OutreachRecipient {
 
 export interface ImportResult {
   added: number;
+  updated: number;
   held_back: number;
   rejected: { line: number; value: string; reason: string }[];
   rejected_total: number;

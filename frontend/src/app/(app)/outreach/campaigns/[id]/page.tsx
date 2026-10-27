@@ -120,6 +120,7 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
         <div className="mt-4 rounded-[10px] bg-stone-50 p-3 text-sm text-stone-700">
           <p>
             <b>{result.added}</b> added
+            {result.updated > 0 && <>, <b>{result.updated}</b> updated with the new message</>}
             {result.held_back > 0 && <>, <b>{result.held_back}</b> held back (see the Skipped filter for why)</>}
             {result.with_own_content > 0 && <>, <b>{result.with_own_content}</b> with their own message</>}
             {result.rejected_total > 0 && <>, <b>{result.rejected_total}</b> rejected</>}.
