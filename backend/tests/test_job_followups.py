@@ -146,3 +146,22 @@ async def test_job_follow_up_failures_do_not_duplicate_or_send_blind(jobs, googl
     assert await followups.tick(js, now=due + timedelta(hours=1)) == 0
     state = (await client.get(f"/api/jobs/applications/{app['id']}")).json()
     assert state["followups_sent"] == 1 and "interrupted" in state["followup_note"] and len(google.sent) == 1
+
+
+async def test_a_follow_up_added_after_sending_counts_from_the_send_date_and_still_skips_replies(jobs, google):
+    client, js = jobs
+    app = await sent_application(client, google, js, plan=[])
+    assert (await client.put(f"/api/jobs/applications/{app['id']}/followups", json={"followups": PLAN[:1]})).status_code == 200
+    start = utcnow()
+    assert await followups.tick(js, now=start + 2 * DAY) == 0  # 5 days after the real send, not after adding it
+    assert await followups.tick(js, now=start + 10 * DAY) == 1  # long overdue: goes at once
+    assert len(google.sent) == 2
+
+    # Someone who answered is left alone, however late the follow-up was added.
+    other = await client.post("/api/jobs/applications", json={"source_text": JD, "details": (await client.post("/api/jobs/extract", json={"text": JD})).json(), "to_email": "sara@acmelabs.io"})
+    sent = await client.post(f"/api/jobs/applications/{other.json()['id']}/send", json={"allow_duplicate": True})
+    assert sent.status_code == 200
+    await client.put(f"/api/jobs/applications/{other.json()['id']}/followups", json={"followups": PLAN[:1]})
+    google.inbox.append({"id": "n1", "from": "Sara <sara@acmelabs.io>"})
+    assert await followups.tick(js, now=start + 30 * DAY) == 0 and len(google.sent) == 3
+    assert (await client.get(f"/api/jobs/applications/{other.json()['id']}")).json()["outcome"] == "replied"

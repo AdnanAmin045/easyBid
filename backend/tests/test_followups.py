@@ -204,3 +204,30 @@ def test_the_saved_signature_is_not_added_under_one_the_email_already_has():
     assert engine.with_signature(plain, jobs).endswith("Github: https://github.com/AdnanAmin045")
     assert engine.with_signature(plain, jobs).count("Muhammad Adnan Amin") == 1
     assert engine.with_signature(plain, JobSettings()) == plain  # no signature saved
+
+
+async def test_a_follow_up_added_after_the_campaign_finished_counts_from_the_real_send_date(outreach, google):
+    client, js = outreach
+    campaign = await first_round(client, js, followups=[], text=LIST)
+    cid = campaign["id"]
+    await engine.tick(js, now=at(1000))  # the next pass notices there is nothing left and finishes the campaign
+    assert (await client.get(f"/api/outreach/campaigns/{cid}")).json()["status"] == "completed"
+    thread_with(google, "t2", "Bob <bob@globex.io>")  # Bob answered in the meantime
+
+    # Ten days later a follow-up is added. It was due long ago, so it goes out at once, to everyone who has not answered.
+    added = await client.patch(f"/api/outreach/campaigns/{cid}", json={"followups": PLAN[:1]})
+    assert added.json()["status"] == "paused" and "follow-up" in added.json()["pause_reason"]
+    started = await client.post(f"/api/outreach/campaigns/{cid}/start")
+    assert started.status_code == 200, started.text
+    sent = [await engine.tick(js, now=at(10 * DAY + i * 61)) for i in range(4)]
+    assert sum(sent) == 2
+    assert [m["To"] for m in sent_mail(google)[3:]] == ["ann.lee@acmelabs.io", "carol@initech.io"]
+    states = {r["email"]: (r["status"], r["followups_sent"]) for r in await recipients(client, cid)}
+    assert states == {"ann.lee@acmelabs.io": ("sent", 1), "bob@globex.io": ("replied", 0), "carol@initech.io": ("sent", 1)}
+    assert (await client.get(f"/api/outreach/campaigns/{cid}")).json()["status"] == "completed"
+
+    # A second follow-up, added later, counts from the first one.
+    await client.patch(f"/api/outreach/campaigns/{cid}", json={"followups": PLAN})
+    await client.post(f"/api/outreach/campaigns/{cid}/start")
+    assert sum([await engine.tick(js, now=at(12 * DAY + i * 61)) for i in range(3)]) == 0  # only 2 days since the first follow-up, it needs 4
+    assert sum([await engine.tick(js, now=at(15 * DAY + i * 61)) for i in range(3)]) == 2
