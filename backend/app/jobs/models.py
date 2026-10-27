@@ -23,7 +23,17 @@ class GmailAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True)
-    refresh_token: Mapped[str] = mapped_column(Text)  # encrypted, see app.jobs.gmail.encrypt
+    # "gmail" sends through the Gmail API with a refresh token; "smtp" through any mailbox with SMTP, and reads
+    # replies over IMAP. Secrets are encrypted, see app.jobs.gmail.encrypt.
+    kind: Mapped[str] = mapped_column(String(10), default="gmail")
+    refresh_token: Mapped[str] = mapped_column(Text, default="")
+    smtp_host: Mapped[str] = mapped_column(String(255), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=465)
+    smtp_secure: Mapped[bool] = mapped_column(Boolean, default=True)  # TLS from the start; False means STARTTLS
+    smtp_user: Mapped[str] = mapped_column(String(320), default="")
+    smtp_password: Mapped[str] = mapped_column(Text, default="")
+    imap_host: Mapped[str] = mapped_column(String(255), default="")
+    imap_port: Mapped[int] = mapped_column(Integer, default=993)
     scopes: Mapped[str] = mapped_column(Text, default="")
     # Shown as the sender and signed under the emails; blank means the names in the Jobs settings.
     sender_name: Mapped[str] = mapped_column(String(120), default="")
