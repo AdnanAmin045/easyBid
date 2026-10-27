@@ -462,6 +462,29 @@ async def import_recipients_file(
     return await _add_recipients(session, js, campaign, sheet, skip_recent, check_domains)
 
 
+def _rewrite_recipient(recipient: Recipient, row: importer.Row) -> int:
+    """Replace what the import brings (a blank cell keeps what is there). 1 when something changed."""
+    changes = {
+        "name": row.name,
+        "company": row.company,
+        "subject": row.subject,
+        "body": row.body,
+    }
+    changed = False
+    for key, value in changes.items():
+        if value and getattr(recipient, key) != value:
+            setattr(recipient, key, value)
+            changed = True
+    merged = {**recipient.fields, **{k: v for k, v in row.fields.items() if v}}
+    if merged != recipient.fields:
+        recipient.fields, changed = merged, True
+    # A failure caused by the old content gets another go. One that may have gone out is left for a person to check.
+    unsafe = ("Outcome unknown", "stopped while sending")
+    if changed and recipient.status == RecipientStatus.FAILED and not any(w in (recipient.error or "") for w in unsafe):
+        recipient.status, recipient.error, recipient.attempts, recipient.retry_at = RecipientStatus.PENDING, None, 0, None
+    return int(changed)
+
+
 async def _add_recipients(
     session: AsyncSession, js: JobServices, campaign: Campaign, sheet: importer.Sheet, skip_recent: bool, check_domains: bool
 ) -> schemas.ImportOut:
@@ -469,17 +492,27 @@ async def _add_recipients(
     if len(sheet.rows) > MAX_IMPORT:
         raise HTTPException(413, f"{len(sheet.rows)} addresses in one go is too many. Import at most {MAX_IMPORT} at a time.")
     existing_count = await session.scalar(select(func.count()).select_from(Recipient).where(Recipient.campaign_id == campaign_id)) or 0
-    if existing_count + len(sheet.rows) > MAX_RECIPIENTS:
-        raise HTTPException(413, f"A campaign holds at most {MAX_RECIPIENTS} recipients")
 
     rejected = [schemas.RejectedRow(line=r.line, value=r.value, reason=r.reason) for r in sheet.rejected]
-    existing = set(await session.scalars(select(Recipient.email).where(Recipient.campaign_id == campaign_id)))
+    existing = {r.email: r for r in await session.scalars(select(Recipient).where(Recipient.campaign_id == campaign_id))}
     rows = []
+    updated = 0
     for row in sheet.rows:
-        if row.email in existing:
-            rejected.append(schemas.RejectedRow(line=row.line, value=row.email, reason="Already in this campaign"))
-        else:
+        known = existing.get(row.email)
+        if known is None:
             rows.append(row)
+        elif known.status in EDITABLE_RECIPIENT:
+            # Not written to yet, so importing the list again with better content corrects them. Anyone emailed is never touched.
+            if _rewrite_recipient(known, row):
+                updated += 1
+            else:
+                rejected.append(schemas.RejectedRow(line=row.line, value=row.email, reason="Already in this campaign"))
+        else:
+            rejected.append(
+                schemas.RejectedRow(line=row.line, value=row.email, reason=f"Already {known.status}, left unchanged and not written to again")
+            )
+    if existing_count + len(rows) > MAX_RECIPIENTS:
+        raise HTTPException(413, f"A campaign holds at most {MAX_RECIPIENTS} recipients")
 
     s = await engine.outreach_settings(session)
     suppressed = set(await session.scalars(select(Suppression.email).where(Suppression.email.in_([r.email for r in rows])))) if rows else set()
@@ -531,12 +564,17 @@ async def _add_recipients(
                 error=hold or None,
             )
         )
-    if any(r for r in rows if r.email not in held_emails):
+    if updated or any(r for r in rows if r.email not in held_emails):
         _reopen(campaign)
-    _log(session, "import", f"{len(rows)} recipient(s) added to '{campaign.name}', {held_back} held back, {len(rejected)} rejected")
+    _log(
+        session,
+        "import",
+        f"{len(rows)} recipient(s) added to '{campaign.name}', {updated} updated, {held_back} held back, {len(rejected)} rejected",
+    )
     await session.commit()
     return schemas.ImportOut(
         added=len(rows),
+        updated=updated,
         held_back=held_back,
         rejected=rejected[:100],
         rejected_total=len(rejected),

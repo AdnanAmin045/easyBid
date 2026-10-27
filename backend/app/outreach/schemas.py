@@ -208,6 +208,7 @@ class RejectedRow(BaseModel):
 
 class ImportOut(BaseModel):
     added: int
+    updated: int = 0  # already in the campaign, not written to yet, and given the new content
     held_back: int  # added as "skipped" with the reason shown on the row
     rejected: list[RejectedRow]
     rejected_total: int
