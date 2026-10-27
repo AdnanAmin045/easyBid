@@ -120,3 +120,44 @@ async def test_jobs_warns_about_addresses_a_campaign_wrote_to_or_that_replied(jo
 from datetime import timedelta  # noqa: E402
 
 DAY_TD = timedelta(days=1)
+
+
+async def test_importing_again_replaces_the_message_of_people_not_written_to_yet(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    campaign = await make_campaign(client)
+    cid = campaign["id"]
+    first = "email,name,company,subject,body\n"
+    await import_text(
+        client,
+        cid,
+        first
+        + "new@globex.io,Newt,Globex,Hello,Hello Newt,\n"
+        + "sent@globex.io,Sam,Globex,Hello,Hello Sam,\n"
+        + "answered@globex.io,Amy,Globex,Hello,Hello Amy,\n",
+    )
+    async with js.sessions() as session:
+        await session.execute(update(Recipient).where(Recipient.email == "sent@globex.io").values(status=RecipientStatus.SENT))
+        await session.execute(update(Recipient).where(Recipient.email == "answered@globex.io").values(status=RecipientStatus.REPLIED))
+        await session.commit()
+
+    fixed = (
+        first
+        + 'new@globex.io,,,Quick idea for Globex,"Hi Newt,\n\nHere is the proper email.\n\nBest regards"\n'
+        + 'sent@globex.io,,,Quick idea,"Proper email for Sam"\n'
+        + 'answered@globex.io,,,Quick idea,"Proper email for Amy"\n'
+    )
+    res = await import_text(client, cid, fixed)
+    assert res["added"] == 0 and res["updated"] == 1 and res["rejected_total"] == 2
+    assert all("left unchanged" in r["reason"] for r in res["rejected"])
+
+    rows = {r["email"]: r for r in await recipients(client, cid)}
+    assert rows["new@globex.io"]["subject"] == "Quick idea for Globex" and "proper email" in rows["new@globex.io"]["body"]
+    assert rows["new@globex.io"]["name"] == "Newt"  # a blank cell keeps what was there
+    assert rows["sent@globex.io"]["body"] == "Hello Sam" and rows["sent@globex.io"]["status"] == "sent"
+    assert rows["answered@globex.io"]["body"] == "Hello Amy" and rows["answered@globex.io"]["status"] == "replied"
+
+    await start(client, cid)
+    assert await engine.tick(js, now=at(1)) == 1
+    assert [m["To"] for m in sent_mail(google)] == ["new@globex.io"]
+    assert "Here is the proper email." in sent_mail(google)[0].get_content()
