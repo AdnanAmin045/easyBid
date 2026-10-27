@@ -463,8 +463,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
             settle()
             await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
         elif e.unreachable:
-            settle()
-            await _pause(session, [campaign.id], f"{text} Nothing was sent. Fix the connection, then resume.", js.notify)
+            settle(text, retry_in=timedelta(minutes=15))  # nothing was sent, so this try is not counted
         elif code is None or code >= 500:
             recipient.followup_errors += 1
             if recipient.followup_errors >= MAX_ATTEMPTS:
@@ -634,8 +633,13 @@ async def _handle_send_error(
         await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
         return
     if e.unreachable:
-        # The mail server cannot be reached from here, so every email would fail. Nothing was sent: keep the recipient.
-        recipient.status, recipient.attempts, recipient.error = RecipientStatus.PENDING, recipient.attempts - 1, text
+        # The mail server could not be reached, so nothing was sent and nobody is marked failed. A connection that only
+        # fails now and then is tried again a little later; one that keeps failing pauses the campaign.
+        recipient.status, recipient.error = RecipientStatus.PENDING, text
+        if recipient.attempts < MAX_ATTEMPTS:
+            recipient.retry_at = now + timedelta(minutes=2 * recipient.attempts)
+            return
+        recipient.attempts = 0
         await _pause(session, [campaign.id], f"{text} Nothing was sent. Fix the connection, then resume.", js.notify)
         return
     if (code is None or code >= 500) and recipient.attempts < MAX_ATTEMPTS:
