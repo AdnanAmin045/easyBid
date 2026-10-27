@@ -125,6 +125,11 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
             {result.with_own_content > 0 && <>, <b>{result.with_own_content}</b> with their own message</>}
             {result.rejected_total > 0 && <>, <b>{result.rejected_total}</b> rejected</>}.
           </p>
+          {result.warnings?.map((w) => (
+            <div key={w} className="mt-2">
+              <Notice tone="amber">{w}</Notice>
+            </div>
+          ))}
           {result.columns.length > 0 && <p className="mt-1 text-xs text-stone-500">New variables: {result.columns.map((c) => `{{${c}}}`).join(" ")}</p>}
           {result.rejected.length > 0 && (
             <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto font-mono text-xs text-stone-600">

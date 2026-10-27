@@ -566,6 +566,7 @@ export interface ImportResult {
   rejected: { line: number; value: string; reason: string }[];
   rejected_total: number;
   with_own_content: number;
+  warnings: string[];
   columns: string[];
 }
 
