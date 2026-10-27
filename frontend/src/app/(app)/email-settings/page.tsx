@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
 import { FollowUpsEditor } from "@/components/followups-editor";
 import { Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, useApi, type GmailStatus, type JobSettings, type OutreachSettings } from "@/lib/api";
+import { api, useApi, type GmailAccount, type GmailStatus, type JobSettings, type OutreachSettings } from "@/lib/api";
 
 const MODELS = [
   { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash (free tier)" },
@@ -89,9 +89,86 @@ function useSaver<T extends object>(path: string, initial: T) {
   return { value, update, num, busy, message, save };
 }
 
+function AccountRow({ account, onChanged, busy, setBusy, setError }: {
+  account: GmailAccount;
+  onChanged: () => void;
+  busy: string;
+  setBusy: (value: string) => void;
+  setError: (value: string) => void;
+}) {
+  const [name, setName] = useState(account.sender_name);
+  const [signature, setSignature] = useState(account.signature);
+  const [open, setOpen] = useState(false);
+  const dirty = name !== account.sender_name || signature !== account.signature;
+  const mine = `${account.id}`;
+
+  async function act(key: string, work: () => Promise<unknown>) {
+    setBusy(key + mine);
+    setError("");
+    try {
+      await work();
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy("");
+  }
+
+  return (
+    <li className="rounded-[10px] border border-stone-200 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+          <span className="font-medium text-stone-900">{account.email}</span>
+          {account.is_default && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Default</span>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setOpen(!open)}>{open ? "Hide details" : "Name & signature"}</Button>
+          {!account.is_default && (
+            <Button loading={busy === "default" + mine} disabled={Boolean(busy)} onClick={() => act("default", () => api(`/jobs/gmail/${account.id}/default`, { method: "POST" }))}>
+              Make default
+            </Button>
+          )}
+          <Button
+            variant="danger"
+            loading={busy === "disconnect" + mine}
+            disabled={Boolean(busy)}
+            onClick={() => {
+              if (!confirm(`Disconnect ${account.email}? Campaigns running from it are paused, and follow-ups of emails it sent stop.`)) return;
+              void act("disconnect", () => api(`/jobs/gmail/${account.id}/disconnect`, { method: "POST" }));
+            }}
+          >
+            Disconnect
+          </Button>
+        </div>
+      </div>
+      {open && (
+        <div className="mt-3 grid gap-3 border-t border-stone-200 pt-3 sm:grid-cols-2">
+          <Field label="Sender name" hint="Leave empty to use the name in Jobs applications below.">
+            <Input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Signature" hint="Leave empty to use the shared signature.">
+            <Textarea rows={3} value={signature} maxLength={1000} onChange={(e) => setSignature(e.target.value)} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Button
+              variant="primary"
+              loading={busy === "save" + mine}
+              disabled={!dirty || Boolean(busy)}
+              onClick={() => act("save", () => api(`/jobs/gmail/${account.id}`, { method: "PATCH", body: { sender_name: name, signature } }))}
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
 function Gmail() {
   const params = useSearchParams();
-  const { data, error, loading, fetching, reload } = useApi<GmailStatus>("/jobs/gmail");
+  const { data, error, loading, reload } = useApi<GmailStatus>("/jobs/gmail");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const result = params.get("gmail");
@@ -108,53 +185,38 @@ function Gmail() {
     }
   }
 
-  async function disconnect() {
-    if (!confirm("Disconnect Gmail? Applications cannot be sent until you connect again.")) return;
-    setBusy("disconnect");
-    setActionError("");
-    try {
-      await api("/jobs/gmail/disconnect", { method: "POST" });
-      reload();
-    } catch (e) {
-      setActionError((e as Error).message);
-    }
-    setBusy("");
-  }
-
   return (
-    <Card title="Gmail connection">
+    <Card title="Gmail accounts">
       {result === "connected" && <Notice tone="green">Gmail connected.</Notice>}
       {result === "error" && <Notice>Gmail was not connected: {params.get("message") || "unknown error"}</Notice>}
       <Notice>{error || actionError}</Notice>
       {loading || !data ? (
         <p className="text-sm text-stone-500">Checking…</p>
-      ) : data.connected ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
-              <span className="font-medium text-stone-900">{data.email}</span>
-            </div>
-            {data.connected_at && <p className="mt-1 text-xs text-stone-500">Connected {new Date(data.connected_at).toLocaleString()}</p>}
-          </div>
-          <Button variant="danger" loading={busy === "disconnect"} disabled={Boolean(busy) || fetching} onClick={disconnect}>
-            Disconnect
-          </Button>
-        </div>
       ) : (
         <>
-          <p className="text-sm text-stone-600">
-            Applications are sent through the Gmail API from your own account. Worklane asks for permission to send email and to read the threads it
-            starts, so it can see replies. Your password is never seen or stored.
+          <p className="mb-3 text-sm text-stone-600">
+            Emails are sent through the Gmail API from your own accounts. Connect as many as you like, then choose which one each campaign or
+            application sends from. Follow-ups and reply checks always use the account the first email went from. Worklane asks for permission to
+            send email and to read the threads it starts, so it can see replies. Your password is never seen or stored.
           </p>
+          {data.accounts.length > 0 && (
+            <ul className="mb-3 space-y-2">
+              {data.accounts.map((account) => (
+                <AccountRow key={account.id} account={account} onChanged={reload} busy={busy} setBusy={setBusy} setError={setActionError} />
+              ))}
+            </ul>
+          )}
           {!data.configured && (
             <Notice tone="amber">
               The server has no Google OAuth client yet. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI on the backend first.
             </Notice>
           )}
-          <Button className="mt-3" variant="dark" loading={busy === "connect"} disabled={Boolean(busy) || !data.configured} onClick={connect}>
-            {busy === "connect" ? "Opening Google…" : "Connect Gmail"}
+          <Button variant="dark" loading={busy === "connect"} disabled={Boolean(busy) || !data.configured} onClick={connect}>
+            {busy === "connect" ? "Opening Google…" : data.accounts.length ? "Connect another Gmail" : "Connect Gmail"}
           </Button>
+          {data.accounts.length > 0 && (
+            <p className="mt-2 text-xs text-stone-500">Google shows its account chooser, so pick the other address there.</p>
+          )}
         </>
       )}
     </Card>

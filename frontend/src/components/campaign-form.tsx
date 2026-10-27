@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { FollowUpsEditor } from "@/components/followups-editor";
 import { Button, Card, Field, Input, Notice, Select, Textarea } from "@/components/ui";
-import { api, useApi, type CampaignInput, type OutreachTemplate, type Resume } from "@/lib/api";
+import { api, useApi, type CampaignInput, type GmailStatus, type OutreachTemplate, type Resume } from "@/lib/api";
 
 export const EMPTY_CAMPAIGN: CampaignInput = {
   name: "",
@@ -15,6 +15,7 @@ export const EMPTY_CAMPAIGN: CampaignInput = {
   append_signature: true,
   resume_id: null,
   attach_first: true,
+  gmail_account_id: null,
   min_delay_seconds: 45,
   max_delay_seconds: 150,
   daily_limit: 40,
@@ -37,6 +38,31 @@ function Check({ label, hint, checked, onChange }: { label: string; hint?: strin
         {hint && <span className="block text-xs text-stone-500">{hint}</span>}
       </span>
     </label>
+  );
+}
+
+function SendFrom({ value, onChange }: { value: number | null; onChange: (value: number | null) => void }) {
+  const { data } = useApi<GmailStatus>("/jobs/gmail");
+  const accounts = data?.accounts ?? [];
+  const fallback = accounts.find((a) => a.is_default);
+  return (
+    <Card title="Send from">
+      <div className="max-w-md">
+        <Field
+          label="Gmail account"
+          hint="Its limits, name and signature apply, and its follow-ups and replies stay on it. Add more accounts in Email settings."
+        >
+          <Select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">{fallback ? `Default (${fallback.email})` : "Default account"}</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.email}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+    </Card>
   );
 }
 
@@ -266,6 +292,8 @@ export function CampaignForm({
         onChange={(followups) => update({ followups })}
         variables="Variables like {{first_name|there}} and your list's columns work here too."
       />
+
+      <SendFrom value={c.gmail_account_id} onChange={(gmail_account_id) => update({ gmail_account_id })} />
 
       <Card title="Pace and schedule">
         <p className="mb-4 text-sm text-stone-500">

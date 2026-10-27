@@ -388,6 +388,7 @@ export interface Application extends ApplicationBrief {
   resume: Resume | null;
   prompt_id: number | null;
   model: string;
+  gmail_account_id: number | null;
   gmail_thread_id: string | null;
   followups: FollowUp[];
   followups_sent: number;
@@ -406,11 +407,21 @@ export interface JobSettings {
   default_followups: FollowUp[];
 }
 
+export interface GmailAccount {
+  id: number;
+  email: string;
+  is_default: boolean;
+  sender_name: string;
+  signature: string;
+  connected_at: string;
+}
+
 export interface GmailStatus {
   configured: boolean;
   connected: boolean;
   email: string | null;
   connected_at: string | null;
+  accounts: GmailAccount[];
 }
 
 export interface JobProfileItem {
@@ -494,6 +505,7 @@ export interface CampaignInput {
   append_signature: boolean;
   resume_id: number | null;
   attach_first: boolean;
+  gmail_account_id: number | null;
   min_delay_seconds: number;
   max_delay_seconds: number;
   daily_limit: number;

@@ -5,12 +5,14 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
 import { FollowUpsEditor } from "@/components/followups-editor";
-import { api, gmailThreadUrl, timeAgo, useApi, type Application, type FollowUp, type JobSettings, type Resume } from "@/lib/api";
+import { api, gmailThreadUrl, timeAgo, useApi, type Application, type FollowUp, type GmailStatus, type JobSettings, type Resume } from "@/lib/api";
 
 function Editor({ initial, onChanged }: { initial: Application; onChanged: (a: Application) => void }) {
   const router = useRouter();
   const { data: resumes } = useApi<Resume[]>("/jobs/resumes");
   const { data: settings } = useApi<JobSettings>("/jobs/settings");
+  const { data: gmail } = useApi<GmailStatus>("/jobs/gmail");
+  const [accountId, setAccountId] = useState<string>("");
   const [app, setApp] = useState(initial);
   const [to, setTo] = useState(initial.to_email);
   const [cc, setCc] = useState(initial.cc.join(", "));
@@ -71,11 +73,11 @@ function Editor({ initial, onChanged }: { initial: Application; onChanged: (a: A
     run("send", async () => {
       if (dirty) load(await patch());
       try {
-        load(await api<Application>(`/jobs/applications/${app.id}/send`, { method: "POST", body: {} }));
+        load(await api<Application>(`/jobs/applications/${app.id}/send`, { method: "POST", body: { gmail_account_id: accountId ? Number(accountId) : null } }));
       } catch (e) {
         const message = (e as Error).message;
         if (!message.startsWith("duplicate: ") || !confirm(`${message.slice(11)}\n\nSend this application anyway?`)) throw e;
-        load(await api<Application>(`/jobs/applications/${app.id}/send`, { method: "POST", body: { allow_duplicate: true } }));
+        load(await api<Application>(`/jobs/applications/${app.id}/send`, { method: "POST", body: { allow_duplicate: true, gmail_account_id: accountId ? Number(accountId) : null } }));
       }
       setNotice("Sent from your Gmail.");
     });
@@ -136,6 +138,16 @@ function Editor({ initial, onChanged }: { initial: Application; onChanged: (a: A
         <Button loading={busy === "save"} disabled={locked || !dirty} onClick={save}>
           {busy === "save" ? "Saving…" : "Save"}
         </Button>
+        {(gmail?.accounts.length ?? 0) > 1 && (
+          <Select aria-label="Send from" className="max-w-56" value={accountId} disabled={locked} onChange={(e) => setAccountId(e.target.value)}>
+            <option value="">Default ({gmail?.accounts.find((a) => a.is_default)?.email})</option>
+            {gmail?.accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.email}
+              </option>
+            ))}
+          </Select>
+        )}
         <Button variant="primary" loading={busy === "send"} disabled={locked || !to || !subject.trim() || !body.trim()} onClick={send}>
           {busy === "send" ? "Sending…" : "Send from Gmail"}
         </Button>
