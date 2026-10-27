@@ -46,6 +46,8 @@ class Campaign(Base):
     footer: Mapped[str] = mapped_column(Text, default="")  # e.g. an opt-out line
     append_signature: Mapped[bool] = mapped_column(Boolean, default=True)
     resume_id: Mapped[int | None] = mapped_column(ForeignKey("job_resumes.id", ondelete="SET NULL"))
+    # Which Gmail the campaign sends from; None means the default account.
+    gmail_account_id: Mapped[int | None] = mapped_column(ForeignKey("gmail_accounts.id", ondelete="SET NULL"))
     attach_first: Mapped[bool] = mapped_column(Boolean, default=True)  # attach the CV to the first email
 
     # Pacing: a random wait between two emails, inside a daily window, never more than daily_limit in 24 hours.
@@ -94,6 +96,8 @@ class Recipient(Base):
     allow_recent: Mapped[bool] = mapped_column(Boolean, default=False)
     retry_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     error: Mapped[str | None] = mapped_column(Text)
+    # The mailbox the first email went from; the thread, the follow-ups and the reply checks all belong to it.
+    gmail_account_id: Mapped[int | None] = mapped_column(ForeignKey("gmail_accounts.id", ondelete="SET NULL"))
     gmail_message_id: Mapped[str | None] = mapped_column(String(100))
     gmail_thread_id: Mapped[str | None] = mapped_column(String(100))
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # the first email

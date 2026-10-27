@@ -16,6 +16,22 @@ class ApplicationStatus:
     FAILED = "failed"  # Gmail refused or the request failed
 
 
+class GmailAccount(Base):
+    """A Gmail mailbox emails can be sent from. Each campaign and application picks one; the first connected is the default."""
+
+    __tablename__ = "gmail_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    refresh_token: Mapped[str] = mapped_column(Text)  # encrypted, see app.jobs.gmail.encrypt
+    scopes: Mapped[str] = mapped_column(Text, default="")
+    # Shown as the sender and signed under the emails; blank means the names in the Jobs settings.
+    sender_name: Mapped[str] = mapped_column(String(120), default="")
+    signature: Mapped[str] = mapped_column(String(1000), default="")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class JobProfileItem(Base):
     __tablename__ = "job_profile_items"
 
@@ -71,6 +87,8 @@ class JobApplication(Base):
     resume_id: Mapped[int | None] = mapped_column(ForeignKey("job_resumes.id", ondelete="SET NULL"))
     prompt_id: Mapped[int | None] = mapped_column(ForeignKey("job_prompts.id", ondelete="SET NULL"))
     model: Mapped[str] = mapped_column(String(60), default="")
+    # The mailbox it was (or will be) sent from. Its thread lives there, so follow-ups and replies use the same one.
+    gmail_account_id: Mapped[int | None] = mapped_column(ForeignKey("gmail_accounts.id", ondelete="SET NULL"))
     gmail_message_id: Mapped[str | None] = mapped_column(String(100))
     gmail_thread_id: Mapped[str | None] = mapped_column(String(100))
     error: Mapped[str | None] = mapped_column(Text)
