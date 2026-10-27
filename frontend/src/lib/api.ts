@@ -410,12 +410,20 @@ export interface JobSettings {
 export interface GmailAccount {
   id: number;
   email: string;
-  kind: "gmail" | "smtp";
+  kind: "gmail" | "smtp" | "alias";
+  parent_id: number | null;
   smtp_host: string;
   is_default: boolean;
   sender_name: string;
   signature: string;
   connected_at: string;
+}
+
+export interface SendAs {
+  email: string;
+  name: string;
+  verified: boolean;
+  added: boolean;
 }
 
 export interface GmailStatus {

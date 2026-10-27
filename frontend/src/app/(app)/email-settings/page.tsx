@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
 import { FollowUpsEditor } from "@/components/followups-editor";
 import { Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, useApi, type GmailAccount, type GmailStatus, type JobSettings, type OutreachSettings } from "@/lib/api";
+import { api, useApi, type GmailAccount, type GmailStatus, type SendAs, type JobSettings, type OutreachSettings } from "@/lib/api";
 
 const MODELS = [
   { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash (free tier)" },
@@ -89,6 +89,71 @@ function useSaver<T extends object>(path: string, initial: T) {
   return { value, update, num, busy, message, save };
 }
 
+function SendAsPanel({ account, onChanged }: { account: GmailAccount; onChanged: () => void }) {
+  const { data, error, loading, reload } = useApi<SendAs[]>(`/jobs/gmail/${account.id}/send-as`);
+  const [busy, setBusy] = useState("");
+  const [problem, setProblem] = useState("");
+
+  async function use(email: string) {
+    setBusy(email);
+    setProblem("");
+    try {
+      await api(`/jobs/gmail/${account.id}/aliases`, { method: "POST", body: { email } });
+      reload();
+      onChanged();
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+    setBusy("");
+  }
+
+  return (
+    <div className="mt-3 border-t border-stone-200 pt-3">
+      <p className="text-sm text-stone-600">
+        Send from another address through this Gmail, for example <b>adnan@codevryn.com</b>. Emails go out over Gmail&apos;s normal connection, so
+        they do not depend on SMTP ports. Gmail has to know the address first:
+      </p>
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-stone-600">
+        <li>In Gmail open Settings, See all settings, Accounts and Import, Send mail as, Add another email address.</li>
+        <li>
+          Enter the address, keep &quot;Treat as an alias&quot;, and choose its mail server (for Hostinger: <code>smtp.hostinger.com</code>, port 465, SSL, the
+          mailbox email and password). Confirm the code Gmail sends to that address.
+        </li>
+        <li>
+          To see replies here, have that mailbox copied into this Gmail: in Hostinger add an email forwarder to {account.email}, or in Gmail use
+          &quot;Check mail from other accounts&quot;.
+        </li>
+        <li>Come back and press Refresh. The address appears below.</li>
+      </ol>
+      <Notice>{error || problem}</Notice>
+      {loading && <p className="mt-2 text-sm text-stone-500">Asking Gmail…</p>}
+      {data && data.length === 0 && <p className="mt-2 text-sm text-stone-500">Gmail has no other send-as address yet.</p>}
+      {data && data.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {data.map((a) => (
+            <li key={a.email} className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-stone-50 px-3 py-2 text-sm">
+              <span>
+                <span className="font-medium text-stone-900">{a.email}</span>
+                {!a.verified && <span className="ml-2 text-xs text-amber-700">not verified in Gmail yet</span>}
+              </span>
+              {a.added ? (
+                <span className="text-xs font-medium text-emerald-700">Added as a sender</span>
+              ) : (
+                <Button variant="primary" loading={busy === a.email} disabled={!a.verified || Boolean(busy)} onClick={() => use(a.email)}>
+                  Use as a sender
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-2">
+        <Button onClick={reload}>Refresh</Button>
+      </div>
+    </div>
+  );
+}
+
 function AccountRow({ account, onChanged, busy, setBusy, setError }: {
   account: GmailAccount;
   onChanged: () => void;
@@ -99,6 +164,7 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
   const [name, setName] = useState(account.sender_name);
   const [signature, setSignature] = useState(account.signature);
   const [open, setOpen] = useState(false);
+  const [sendAs, setSendAs] = useState(false);
   const dirty = name !== account.sender_name || signature !== account.signature;
   const mine = `${account.id}`;
 
@@ -120,12 +186,14 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
         <div className="flex items-center gap-2 text-sm">
           <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
           <span className="font-medium text-stone-900">{account.email}</span>
+          {account.kind === "alias" && <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">Send as, through Gmail</span>}
           {account.kind === "smtp" && <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">SMTP · {account.smtp_host}</span>}
           {account.is_default && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Default</span>}
         </div>
         <div className="flex flex-wrap gap-2">
+          {account.kind === "gmail" && <Button onClick={() => setSendAs(!sendAs)}>{sendAs ? "Hide send-as" : "Send-as addresses"}</Button>}
           <Button onClick={() => setOpen(!open)}>{open ? "Hide details" : "Name & signature"}</Button>
-          {!account.is_default && (
+          {!account.is_default && account.kind !== "alias" && (
             <Button loading={busy === "default" + mine} disabled={Boolean(busy)} onClick={() => act("default", () => api(`/jobs/gmail/${account.id}/default`, { method: "POST" }))}>
               Make default
             </Button>
@@ -135,7 +203,7 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
             loading={busy === "disconnect" + mine}
             disabled={Boolean(busy)}
             onClick={() => {
-              if (!confirm(`Remove ${account.email}? Campaigns running from it are paused, and follow-ups of emails it sent stop.`)) return;
+              if (!confirm(`Remove ${account.email}? Campaigns running from it are paused, and follow-ups of emails it sent stop.${account.kind === "gmail" ? " Its send-as addresses are removed with it." : ""}`)) return;
               void act("disconnect", () => api(`/jobs/gmail/${account.id}/disconnect`, { method: "POST" }));
             }}
           >
@@ -143,6 +211,7 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
           </Button>
         </div>
       </div>
+      {sendAs && account.kind === "gmail" && <SendAsPanel account={account} onChanged={onChanged} />}
       {open && (
         <div className="mt-3 grid gap-3 border-t border-stone-200 pt-3 sm:grid-cols-2">
           <Field label="Sender name" hint="Leave empty to use the name in Jobs applications below.">
@@ -291,8 +360,9 @@ function Gmail() {
         <>
           <p className="mb-3 text-sm text-stone-600">
             Connect as many sending accounts as you like, then choose which one each campaign or application sends from. A Gmail account is
-            connected through Google (Worklane never sees its password). Any other mailbox, such as a Hostinger address, is added over SMTP and
-            IMAP. Follow-ups and reply checks always use the account the first email went from.
+            connected through Google (Worklane never sees its password). To send as another address, such as a Hostinger one, add it to Gmail
+            as a send-as address and use it from here (most reliable, it goes over HTTPS). A mailbox can also be added directly over SMTP and
+            IMAP, but that needs the server to reach its mail ports. Follow-ups and reply checks always use the account the first email went from.
           </p>
           {data.accounts.length > 0 && (
             <ul className="mb-3 space-y-2">
