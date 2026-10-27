@@ -279,4 +279,7 @@ def open_mailbox(js, account: GmailAccount) -> Mailbox:
     """The mailbox of an account. Raises GmailError when the saved secret can no longer be read."""
     if account.kind == "smtp":
         return SmtpMailbox(js.smtp, smtp_settings(account))
-    return GmailMailbox(js.gmail, gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
+    owner = getattr(account, "gmail_owner", None) or account  # an alias sends through its Gmail (see accounts.with_parents)
+    if account.kind == "alias" and owner is account:
+        raise GmailError(f"The Gmail behind {account.email} is no longer connected.")
+    return GmailMailbox(js.gmail, gmail_lib.decrypt(owner.refresh_token, get_env().secret_key))

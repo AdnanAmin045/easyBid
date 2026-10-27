@@ -76,7 +76,7 @@ async def sent_today(session: AsyncSession, account_id: int | None = None) -> in
     midnight = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     query = select(func.count()).where(JobApplication.status == ApplicationStatus.SENT, JobApplication.sent_at >= midnight)
     if account_id is not None:
-        query = query.where(JobApplication.gmail_account_id == account_id)
+        query = query.where(JobApplication.gmail_account_id.in_(await accounts.family(session, account_id)))
     return await session.scalar(query) or 0
 
 
@@ -270,6 +270,66 @@ async def smtp_connect(body: schemas.SmtpAccountIn, session: AsyncSession = Depe
     return account
 
 
+@router.get("/gmail/{account_id}/send-as", response_model=list[schemas.SendAsOut])
+async def gmail_send_as(account_id: int, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
+    """The addresses this Gmail can send as (Gmail settings, "Send mail as"), and which of them are already added here."""
+    account = await _account(session, account_id)
+    if account.kind != "gmail":
+        raise HTTPException(409, "Only a Gmail connection has send-as addresses")
+    try:
+        found = await js.gmail.send_as(gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
+    except GmailError as e:
+        raise HTTPException(502, str(e)) from e
+    added = {a.email for a in await session.scalars(select(GmailAccount))}
+    return [schemas.SendAsOut(**item, added=item["email"] in added) for item in found if not item["primary"]]
+
+
+@router.post("/gmail/{account_id}/aliases", response_model=schemas.GmailAccountOut)
+async def gmail_add_alias(account_id: int, body: schemas.AliasIn, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
+    """Use a verified "Send mail as" address of this Gmail as a sender of its own."""
+    parent = await _account(session, account_id)
+    if parent.kind != "gmail":
+        raise HTTPException(409, "Only a Gmail connection can have send-as addresses")
+    email = str(body.email).lower()
+    try:
+        found = {a["email"]: a for a in await js.gmail.send_as(gmail_lib.decrypt(parent.refresh_token, get_env().secret_key))}
+    except GmailError as e:
+        raise HTTPException(502, str(e)) from e
+    entry = found.get(email)
+    if entry is None:
+        raise HTTPException(
+            422,
+            f"{email} is not in the Send mail as list of {parent.email}. In Gmail open Settings, Accounts and Import, "
+            "Send mail as, Add another email address, and finish its verification first.",
+        )
+    if not entry["verified"]:
+        raise HTTPException(422, f"{email} is added in Gmail but not verified yet. Open the confirmation email Gmail sent to it, then try again.")
+
+    existing = await session.scalar(select(GmailAccount).where(GmailAccount.email == email))
+    if existing and existing.kind == "gmail":
+        raise HTTPException(409, f"{email} is connected as a Gmail of its own already.")
+    if existing and existing.kind == "alias" and existing.parent_id == parent.id:
+        return existing
+    if existing:
+        # An SMTP mailbox for the same address is turned into the alias, so campaigns that point at it keep working,
+        # unless it has already sent something: those conversations live in that mailbox and cannot move.
+        sent = await session.scalar(select(func.count()).select_from(Recipient).where(Recipient.gmail_account_id == existing.id, Recipient.gmail_thread_id.is_not(None)))
+        sent += await session.scalar(select(func.count()).select_from(JobApplication).where(JobApplication.gmail_account_id == existing.id, JobApplication.gmail_thread_id.is_not(None)))
+        if sent:
+            raise HTTPException(409, f"{email} already sent {sent} email(s) as its own SMTP mailbox. Keep it, or use another address for the alias.")
+        account = existing
+        account.smtp_host = account.smtp_user = account.smtp_password = account.imap_host = account.refresh_token = ""
+    else:
+        account = GmailAccount(email=email, is_default=False)
+        session.add(account)
+    account.kind, account.parent_id = "alias", parent.id
+    account.sender_name = account.sender_name or entry["name"]
+    account.connected_at = utcnow()
+    _log(session, "gmail", f"{email} added as a sender of {parent.email}")
+    await session.commit()
+    return account
+
+
 @router.post("/gmail/{account_id}/default", response_model=schemas.GmailAccountOut)
 async def gmail_make_default(account_id: int, session: AsyncSession = Depends(get_session)):
     account = await _account(session, account_id)
@@ -283,7 +343,7 @@ async def gmail_make_default(account_id: int, session: AsyncSession = Depends(ge
 async def gmail_disconnect(account_id: int, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
     """Remove one Gmail. What it already sent stays in the history; its follow-ups and reply checks stop with it."""
     account = await _account(session, account_id)
-    if account.kind == "gmail":
+    if account.kind == "gmail":  # an alias has no connection of its own to revoke
         try:
             await js.gmail.revoke(gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
         except GmailError:
@@ -292,7 +352,10 @@ async def gmail_disconnect(account_id: int, session: AsyncSession = Depends(get_
     # Campaigns that were set to send from it would otherwise carry on from the default account without anyone noticing.
     await session.execute(
         update(Campaign)
-        .where(Campaign.gmail_account_id == account.id, Campaign.status == CampaignStatus.RUNNING)
+        .where(
+            Campaign.gmail_account_id.in_(await accounts.family(session, account.id) if account.kind != "alias" else [account.id]),
+            Campaign.status == CampaignStatus.RUNNING,
+        )
         .values(
             status=CampaignStatus.PAUSED,
             pause_reason=f"{address} was disconnected. Choose a Gmail for this campaign, then start it again.",

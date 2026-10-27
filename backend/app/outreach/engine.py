@@ -99,7 +99,8 @@ async def delivered_since(
         JobApplication.status == ApplicationStatus.SENT, JobApplication.last_contact_at > since, JobApplication.last_contact_at <= now
     )
     if account_id is not None:
-        query, applications = query.where(Recipient.gmail_account_id == account_id), applications.where(JobApplication.gmail_account_id == account_id)
+        ids = await accounts.family(session, account_id)
+        query, applications = query.where(Recipient.gmail_account_id.in_(ids)), applications.where(JobApplication.gmail_account_id.in_(ids))
     # One Gmail account sends both, so both count against its limit.
     return (await session.scalar(query) or 0) + (await session.scalar(applications) or 0)
 
@@ -109,7 +110,8 @@ async def last_send(session: AsyncSession, now: datetime, account_id: int | None
     recipients = select(func.max(Recipient.last_contact_at)).where(Recipient.last_contact_at <= now)
     applications = select(func.max(JobApplication.last_contact_at)).where(JobApplication.last_contact_at <= now)
     if account_id is not None:
-        recipients, applications = recipients.where(Recipient.gmail_account_id == account_id), applications.where(JobApplication.gmail_account_id == account_id)
+        ids = await accounts.family(session, account_id)
+        recipients, applications = recipients.where(Recipient.gmail_account_id.in_(ids)), applications.where(JobApplication.gmail_account_id.in_(ids))
     return max(filter(None, [await session.scalar(recipients), await session.scalar(applications)]), default=None)
 
 
@@ -756,7 +758,8 @@ async def check_replies(js, now: datetime) -> None:
         )
         if not rows:
             return
-        mailboxes = {a.id: a for a in await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})))}
+        found = await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})).execution_options(populate_existing=True))
+        mailboxes = {a.id: a for a in await accounts.with_parents(session, list(found))}
         touched: set[int] = set()
         for recipient in rows:
             recipient.checked_at = now
@@ -847,11 +850,11 @@ async def tick(js, now: datetime | None = None) -> int:
         async with js.sessions() as session:
             campaign = await session.get(Campaign, campaign_id)
             account = await accounts.resolve(session, campaign.gmail_account_id) if campaign else None
-        if account is None or account.id in busy:
+        if account is None or accounts.root_id(account) in busy:
             continue
         if await send_next(js, campaign_id, now):
             sent += 1
-            busy.add(account.id)
+            busy.add(accounts.root_id(account))
     await generate_ahead(js, now)
     await check_replies(js, now)
     return sent

@@ -244,6 +244,24 @@ class GmailClient:
             raise GmailError(f"Could not reach Google: {e!r}") from e
         return False
 
+    async def send_as(self, refresh_token: str) -> list[dict]:
+        """The addresses this Gmail may send as: [{'email', 'name', 'primary', 'verified'}]."""
+        token = await self.access_token(refresh_token)
+        try:
+            res = await self._http.get(f"{API}/settings/sendAs", headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:
+            raise GmailError(f"Could not reach Google: {e!r}") from e
+        return [
+            {
+                "email": item["sendAsEmail"].lower(),
+                "name": item.get("displayName", ""),
+                "primary": bool(item.get("isPrimary")),
+                # Gmail replaces the From address of anything sent as an address that is not verified.
+                "verified": item.get("verificationStatus", "accepted") == "accepted",
+            }
+            for item in (await self._json(res)).get("sendAs", [])
+        ]
+
     async def revoke(self, refresh_token: str) -> None:
         try:
             await self._http.post(REVOKE_URL, data={"token": refresh_token})

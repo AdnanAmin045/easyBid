@@ -180,7 +180,8 @@ class GmailAccountOut(BaseModel):
 
     id: int
     email: str
-    kind: Literal["gmail", "smtp"] = "gmail"
+    kind: Literal["gmail", "smtp", "alias"] = "gmail"
+    parent_id: int | None = None
     smtp_host: str = ""
     is_default: bool
     sender_name: str
@@ -211,6 +212,17 @@ class SmtpAccountIn(BaseModel):
         if "/" in value or " " in value or ":" in value:
             raise ValueError("Enter the server name only, e.g. smtp.hostinger.com, and put the port in its own box")
         return value
+
+
+class SendAsOut(BaseModel):
+    email: str
+    name: str = ""
+    verified: bool
+    added: bool  # already a sender here
+
+
+class AliasIn(BaseModel):
+    email: EmailStr
 
 
 class GmailAccountPatch(BaseModel):

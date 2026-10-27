@@ -116,7 +116,7 @@ async def send_due(js, now: datetime) -> int:
             break
         if application is None:
             return 0
-        account = await session.get(GmailAccount, application.gmail_account_id)
+        account = await accounts.resolve(session, application.gmail_account_id)
         if account is None:
             return 0
         step = application.followups_sent
@@ -250,7 +250,8 @@ async def check_replies(js, now: datetime) -> None:
         )
         if not rows:
             return
-        mailboxes = {a.id: a for a in await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})))}
+        found = await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})).execution_options(populate_existing=True))
+        mailboxes = {a.id: a for a in await accounts.with_parents(session, list(found))}
         for application in rows:
             application.checked_at = now
             account = mailboxes.get(application.gmail_account_id)
