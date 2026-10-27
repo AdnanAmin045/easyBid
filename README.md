@@ -121,6 +121,8 @@ Only the refresh token is stored, encrypted with a key derived from `SECRET_KEY`
 
 ## Outreach service
 
+**Several Gmail accounts.** Connect as many as you like in Email settings (the first is the default). Each campaign picks the account it sends from, and each Jobs application picks one when it is sent. An account keeps its own name and signature (blank means the shared ones) and its own daily limit and gap. Follow-ups and reply checks always use the account the first email went from, because that conversation lives in its mailbox. Disconnecting an account pauses the campaigns that sent from it and stops follow-ups of what it sent. Run `alembic upgrade head`: the existing connection becomes the first account.
+
 Lives in `backend/app/outreach/` (tables `outreach_*`, API `/api/outreach/...`, pages `/outreach/...`). It uses the Gmail connection and signature from Email settings. Account limits, the schedule new campaigns start with, and every Jobs limit are on that one page (/email-settings). The sender runs inside the web process, every 10 seconds; every claim is a database compare-and-set, so a second instance never sends the same email twice. Apply the migration with `alembic upgrade head` (the Dockerfile does it on start).
 
 **Two ways to write**

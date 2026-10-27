@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 from app.db import get_session
 from app.jobs import api as jobs_api
 from app.jobs.gmail import GmailClient
-from app.jobs.models import ApplicationStatus, JobApplication
+from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication
 from app.main import app
 from app.models import utcnow
 from app.outreach import engine, importer, render
@@ -360,8 +360,14 @@ async def test_account_limit_counts_job_applications_too(outreach, google):
     await connect_gmail(client)
     await client.put("/api/outreach/settings", json={"daily_limit": 3, "min_gap_seconds": 5, "skip_recent_days": 30, "bounce_pause_percent": 8, "model": "gemini-3.5-flash"})
     async with js.sessions() as session:
+        mailbox = (await session.scalars(select(GmailAccount))).one()
         for i in range(2):
-            session.add(JobApplication(status=ApplicationStatus.SENT, source_text="x", to_email=f"job{i}@co.io", sent_at=NOW - timedelta(hours=1), last_contact_at=NOW - timedelta(hours=1)))
+            session.add(
+                JobApplication(
+                    status=ApplicationStatus.SENT, source_text="x", to_email=f"job{i}@co.io", sent_at=NOW - timedelta(hours=1),
+                    last_contact_at=NOW - timedelta(hours=1), gmail_account_id=mailbox.id,
+                )
+            )
         await session.commit()
     campaign = await make_campaign(client)
     await import_text(client, campaign["id"], "a@acmelabs.io\nb@acmelabs.io\nc@acmelabs.io")

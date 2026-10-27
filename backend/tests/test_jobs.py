@@ -6,6 +6,7 @@ from email import policy
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 from app.config import get_env
 from app.db import get_session
@@ -13,6 +14,7 @@ from app.jobs import api as jobs_api
 from app.jobs import gmail as gmail_lib
 from app.jobs.extract import deobfuscate, find_emails
 from app.jobs.gmail import GmailClient
+from app.jobs.models import GmailAccount
 from app.main import app
 from app.services.llm import LLMError
 from tests.test_api import login
@@ -56,6 +58,10 @@ class FakeGoogle:
         self.sent: list[dict] = []
         self.revoked: list[str] = []
         self.send_status = 200
+        self.next_email = "me@gmail.com"  # the address the next connected Google account turns out to be
+        self.next_refresh = "rt-secret"
+        self.profiles: dict[str, str] = {}  # access token -> address
+        self.sent_with: list[str] = []  # the access token each email was sent with
         self.inbox: list[dict] = []  # messages that arrived outside any sent thread: {"id", "from", "auto"?}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -63,14 +69,17 @@ class FakeGoogle:
         if url.startswith(gmail_lib.TOKEN_URL):
             form = dict(x.split("=", 1) for x in request.content.decode().split("&"))
             if form["grant_type"] == "authorization_code":
-                return httpx.Response(200, json={"access_token": "at-1", "refresh_token": "rt-secret", "expires_in": 3600})
-            return httpx.Response(200, json={"access_token": "at-2", "expires_in": 3600})
+                self.profiles[f"at-{self.next_refresh}"] = self.next_email
+                return httpx.Response(200, json={"access_token": f"at-{self.next_refresh}", "refresh_token": self.next_refresh, "expires_in": 3600})
+            return httpx.Response(200, json={"access_token": f"at-{form['refresh_token']}", "expires_in": 3600})
         if url.endswith("/profile"):
-            return httpx.Response(200, json={"emailAddress": "me@gmail.com"})
+            token = request.headers.get("authorization", "").removeprefix("Bearer ")
+            return httpx.Response(200, json={"emailAddress": self.profiles.get(token, "me@gmail.com")})
         if url.endswith("/messages/send"):
             if self.send_status != 200:
                 return httpx.Response(self.send_status, json={"error": {"message": "Rate limit"}})
             self.sent.append(json.loads(request.content))
+            self.sent_with.append(request.headers.get("authorization", "").removeprefix("Bearer "))
             return httpx.Response(200, json={"id": f"m{len(self.sent)}", "threadId": f"t{len(self.sent)}"})
         path = request.url.path
         if path.endswith("/messages") and request.method == "GET":
@@ -141,11 +150,12 @@ async def test_gmail_connection(jobs, google):
 
     # The refresh token is never stored in the clear.
     async with jobs[1].sessions() as session:
-        stored = await jobs_api.store.get_config(session, jobs_api.GMAIL_KEY)
-    assert "rt-secret" not in json.dumps(stored)
-    assert gmail_lib.decrypt(stored["refresh_token"], get_env().secret_key) == "rt-secret"
+        stored = (await session.scalars(select(GmailAccount))).one()
+    assert "rt-secret" not in stored.refresh_token
+    assert gmail_lib.decrypt(stored.refresh_token, get_env().secret_key) == "rt-secret"
 
-    assert (await client.post("/api/jobs/gmail/disconnect")).status_code == 204
+    account_id = status["accounts"][0]["id"]
+    assert (await client.post(f"/api/jobs/gmail/{account_id}/disconnect")).status_code == 204
     assert google.revoked and (await client.get("/api/jobs/gmail")).json()["connected"] is False
 
 
