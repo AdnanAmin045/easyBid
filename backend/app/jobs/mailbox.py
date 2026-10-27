@@ -9,6 +9,7 @@ answers are found through the headers (References, In-Reply-To) or by sender, in
 import asyncio
 import imaplib
 import smtplib
+import socket
 import ssl
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -64,12 +65,46 @@ class SmtpSettings:
     imap_port: int
 
 
+def connect(host: str, port: int, timeout: float) -> socket.socket:
+    """Open a connection, trying IPv4 addresses before IPv6, and say what happened with each address if all fail.
+
+    Many hosts (Render, for one) have no IPv6 route, and Python only reports the last address it tried: a plain
+    "Network is unreachable" then hides that the IPv4 address timed out or was refused.
+    """
+    errors = []
+    for family, kind, proto, _, address in sorted(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM), key=lambda i: i[0] != socket.AF_INET):
+        sock = socket.socket(family, kind, proto)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(address)
+            return sock
+        except OSError as e:
+            sock.close()
+            errors.append(f"{'IPv4' if family == socket.AF_INET else 'IPv6'} {address[0]}: {e.strerror or e!r}")
+    raise OSError("; ".join(errors) or "no address found")
+
+
+class _Smtp(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        return connect(host, port, timeout)
+
+
+class _SmtpSsl(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        return self.context.wrap_socket(connect(host, port, timeout), server_hostname=self._host)
+
+
+class _ImapSsl(imaplib.IMAP4_SSL):
+    def _create_socket(self, timeout):
+        return self.ssl_context.wrap_socket(connect(self.host, self.port, timeout), server_hostname=self.host)
+
+
 class SmtpDriver:
     """The sockets behind SMTP and IMAP. Tests replace the three classes with fakes."""
 
-    smtp_ssl = smtplib.SMTP_SSL
-    smtp_plain = smtplib.SMTP
-    imap_ssl = imaplib.IMAP4_SSL
+    smtp_ssl = _SmtpSsl
+    smtp_plain = _Smtp
+    imap_ssl = _ImapSsl
 
     def smtp(self, s: SmtpSettings):
         context = ssl.create_default_context()
