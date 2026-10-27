@@ -60,11 +60,11 @@ def _open(campaign: Campaign) -> None:
         raise HTTPException(409, "This campaign was cancelled. Make a new campaign to send more.")
 
 
-def _reopen(campaign: Campaign) -> None:
+def _reopen(campaign: Campaign, why: str = "there are new recipients") -> None:
     """A finished campaign that gets someone new to write to waits, paused, for the user to resume it."""
     if campaign.status == CampaignStatus.COMPLETED:
         campaign.status, campaign.finished_at = CampaignStatus.PAUSED, None
-        campaign.pause_reason = "Reopened: there are new recipients. Resume to send."
+        campaign.pause_reason = f"Reopened: {why}. Resume to send."
 
 
 async def _counts(session: AsyncSession, campaign_id: int) -> dict[str, int]:
@@ -281,7 +281,7 @@ async def update_campaign(campaign_id: int, body: schemas.CampaignPatch, session
     resume = await _resume_for(session, merged.resume_id)
     await _check_account(session, merged.gmail_account_id)
     if merged.model_dump()["followups"] != campaign.followups:
-        _reopen(campaign)  # a finished campaign with a new follow-up has more to send
+        _reopen(campaign, "a follow-up was added")  # a finished campaign with a new follow-up has more to send
     for field, value in merged.model_dump().items():
         setattr(campaign, field, value)
     campaign.resume = resume
@@ -326,7 +326,7 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
             if campaign.gmail_account_id is None
             else "The Gmail this campaign sends from was disconnected. Choose another one in the campaign."
         )
-    if not pending:
+    if not pending and not await _scheduled(session, campaign):
         blockers.append("There is nobody left to send to. Add recipients first.")
 
     missing_examples: list[schemas.MissingVariables] = []
