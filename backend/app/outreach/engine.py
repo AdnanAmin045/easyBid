@@ -418,6 +418,12 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
         await session.commit()
         return False
+    if outcome == RecipientStatus.FAILED:
+        settle()
+        recipient.status, recipient.error = RecipientStatus.FAILED, SENDAS_FAILED.format(address=account.email)
+        await _pause(session, [campaign.id], recipient.error, js.notify)
+        await session.commit()
+        return False
     if outcome:
         settle()
         recipient.status = outcome
@@ -713,8 +719,17 @@ async def generate_ahead(js, now: datetime) -> None:
 # --- replies and bounces ----------------------------------------------------------
 
 
+SENDAS_FAILED = (
+    "Gmail could not send this email as {address}: the 'Send mail as' settings in Gmail are wrong or out of date. "
+    "Fix them in Gmail (Settings, Accounts and Import, Send mail as, edit info), then retry."
+)
+
+
 def classify_thread(messages: list[dict], my_email: str, sent_id: str | None) -> str | None:
-    """RecipientStatus.BOUNCED or REPLIED when something other than our own message is in the thread."""
+    """BOUNCED, REPLIED, or FAILED when something other than our own message is in the thread.
+
+    FAILED is Gmail telling us it could not send as a "Send mail as" address. The email never left, and the address
+    it was meant for did nothing wrong, so it is neither a bounce nor a reason to stop writing to them."""
     outcome = None
     for message in messages:
         if message.get("id") == sent_id:
@@ -722,6 +737,8 @@ def classify_thread(messages: list[dict], my_email: str, sent_id: str | None) ->
         headers = {h["name"].lower(): h["value"] for h in message.get("payload", {}).get("headers", [])}
         sender = headers.get("from", "").lower()
         if "mailer-daemon" in sender or "postmaster" in sender:
+            if "send mail as" in message.get("snippet", "").lower():
+                return RecipientStatus.FAILED
             return RecipientStatus.BOUNCED
         if my_email.lower() in sender:
             continue  # our own follow-up
@@ -748,6 +765,8 @@ async def check_replies(js, now: datetime) -> None:
                     # Fresh sends are looked at often, older ones every few hours.
                     or_(
                         Recipient.checked_at.is_(None),
+                        # Just sent: a bounce or a Gmail "Send mail as" failure arrives within minutes, and the campaign should stop at once.
+                        (Recipient.sent_at > now - timedelta(minutes=30)) & (Recipient.checked_at < now - timedelta(minutes=2)),
                         (Recipient.sent_at > recent) & (Recipient.checked_at < now - timedelta(minutes=15)),
                         Recipient.checked_at < now - timedelta(hours=3),
                     ),
@@ -761,6 +780,7 @@ async def check_replies(js, now: datetime) -> None:
         found = await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})).execution_options(populate_existing=True))
         mailboxes = {a.id: a for a in await accounts.with_parents(session, list(found))}
         touched: set[int] = set()
+        broken: dict[int, str] = {}  # campaigns whose Gmail could not send as its address
         for recipient in rows:
             recipient.checked_at = now
             account = mailboxes.get(recipient.gmail_account_id)
@@ -780,7 +800,10 @@ async def check_replies(js, now: datetime) -> None:
                 except GmailError as e:
                     logger.warning("Could not look for answers from %s: %s", recipient.email, e)
                     continue
-            if outcome == RecipientStatus.BOUNCED:
+            if outcome == RecipientStatus.FAILED:
+                recipient.status, recipient.error = RecipientStatus.FAILED, SENDAS_FAILED.format(address=account.email)
+                broken[recipient.campaign_id] = recipient.error
+            elif outcome == RecipientStatus.BOUNCED:
                 recipient.status, recipient.error = RecipientStatus.BOUNCED, "The email could not be delivered"
                 if not await is_suppressed(session, recipient.email):
                     session.add(Suppression(email=recipient.email, reason="Bounced"))
@@ -789,6 +812,8 @@ async def check_replies(js, now: datetime) -> None:
                 recipient.status = RecipientStatus.REPLIED
                 store.log_event(session, "outreach_reply", f"{recipient.email} replied")
         await session.flush()
+        for campaign_id, reason in broken.items():
+            await _pause(session, [campaign_id], reason, js.notify)
         for campaign_id in touched:
             await _pause_on_bounces(js, session, campaign_id, s)
         await session.commit()

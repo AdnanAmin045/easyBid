@@ -73,6 +73,13 @@ async def _recover(js, now: datetime) -> None:
 
 
 async def _mark_outcome(session, application: JobApplication, outcome: str) -> None:
+    if outcome == RecipientStatus.FAILED:
+        # Gmail could not send as the address: the application never left, and nobody has answered or bounced.
+        application.status = ApplicationStatus.FAILED
+        application.error = engine.SENDAS_FAILED.format(address="this address")
+        application.followups_sent = len(application.followups or [])
+        store.log_event(session, "jobs_send_failed", f"{application.to_email}: {application.error}", "error")
+        return
     application.outcome = outcome
     if outcome == RecipientStatus.BOUNCED:
         application.followup_note = "Gmail could not deliver this email"
@@ -240,6 +247,7 @@ async def check_replies(js, now: datetime) -> None:
                     ),
                     or_(
                         JobApplication.checked_at.is_(None),
+                        (JobApplication.sent_at > now - timedelta(minutes=30)) & (JobApplication.checked_at < now - timedelta(minutes=2)),
                         (JobApplication.sent_at > now - timedelta(days=1)) & (JobApplication.checked_at < now - timedelta(minutes=15)),
                         JobApplication.checked_at < now - timedelta(hours=3),
                     ),
