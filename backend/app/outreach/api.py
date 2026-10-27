@@ -498,6 +498,21 @@ def _rewrite_recipient(recipient: Recipient, row: importer.Row) -> int:
     return int(changed)
 
 
+def _import_warnings(sheet: importer.Sheet) -> list[str]:
+    """A column full of long text that was not taken as the message is almost always a message with an unexpected name."""
+    if any(row.body for row in sheet.rows):
+        return []
+    found = []
+    for column in sheet.columns:
+        cells = [row.fields[column] for row in sheet.rows if row.fields.get(column)]
+        if cells and sum(len(c) for c in cells) / len(cells) > 200:
+            found.append(
+                f"The column '{column}' holds long text but was not used as the message, so those emails will use the campaign template. "
+                "Rename the column to 'body' (or 'email body') and import the list again to send its text as written."
+            )
+    return found
+
+
 async def _add_recipients(
     session: AsyncSession, js: JobServices, campaign: Campaign, sheet: importer.Sheet, skip_recent: bool, check_domains: bool
 ) -> schemas.ImportOut:
@@ -592,6 +607,7 @@ async def _add_recipients(
         rejected=rejected[:100],
         rejected_total=len(rejected),
         with_own_content=with_own_content,
+        warnings=_import_warnings(sheet),
         columns=sheet.columns,
     )
 

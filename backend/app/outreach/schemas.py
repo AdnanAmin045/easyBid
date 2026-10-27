@@ -217,6 +217,7 @@ class ImportOut(BaseModel):
     rejected: list[RejectedRow]
     rejected_total: int
     with_own_content: int  # rows that bring their own subject and body
+    warnings: list[str] = []
     columns: list[str]
 
 

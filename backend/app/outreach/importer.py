@@ -71,6 +71,19 @@ def clean_address(value: str) -> tuple[str, str] | None:
     return email, name
 
 
+def _says_subject(words: set[str]) -> bool:
+    return "subject" in words
+
+
+def _says_body(words: set[str]) -> bool:
+    if words & {"body", "draft"}:
+        return True
+    about_email = bool(words & {"email", "mail"})
+    if about_email and words & {"personalised", "personalized", "custom", "generated"}:
+        return True
+    return about_email and bool(words & {"content", "message", "text", "copy", "pitch", "template"})
+
+
 def _header_map(cells: list[str]) -> dict[int, str] | None:
     """Column index -> role (or the column's own key) when this row is a header with an email column."""
     roles: dict[int, str] = {}
@@ -80,7 +93,15 @@ def _header_map(cells: list[str]) -> dict[int, str] | None:
             continue
         role = next((r for r, names in ALIASES.items() if name in names), None)
         roles[i] = role or name
-    return roles if "email" in roles.values() else None
+    if "email" not in roles.values():
+        return None
+    # Headers like "Email Content" or "Personalised Email Body" are not in the list above, but say what they hold.
+    for role, test in (("subject", _says_subject), ("body", _says_body)):
+        if role not in roles.values():
+            guess = next((i for i, name in roles.items() if name not in ALIASES and test(set(name.split("_")))), None)
+            if guess is not None:
+                roles[guess] = role
+    return roles
 
 
 def _header(text: str) -> tuple[str, dict[int, str]] | None:
