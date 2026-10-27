@@ -62,6 +62,8 @@ class FakeGoogle:
         self.next_refresh = "rt-secret"
         self.profiles: dict[str, str] = {}  # access token -> address
         self.sent_with: list[str] = []  # the access token each email was sent with
+        # Gmail's "Send mail as" list: [(address, verificationStatus)]. The primary address is always there.
+        self.send_as: list[tuple[str, str]] = []
         self.inbox: list[dict] = []  # messages that arrived outside any sent thread: {"id", "from", "auto"?}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -82,6 +84,11 @@ class FakeGoogle:
             self.sent_with.append(request.headers.get("authorization", "").removeprefix("Bearer "))
             return httpx.Response(200, json={"id": f"m{len(self.sent)}", "threadId": f"t{len(self.sent)}"})
         path = request.url.path
+        if path.endswith("/settings/sendAs"):
+            owner = self.profiles.get(request.headers.get("authorization", "").removeprefix("Bearer ").replace("at-", "at-", 1), "me@gmail.com")
+            items = [{"sendAsEmail": owner, "isPrimary": True, "verificationStatus": "accepted"}]
+            items += [{"sendAsEmail": a, "displayName": "Adnan Codevryn", "verificationStatus": status} for a, status in self.send_as]
+            return httpx.Response(200, json={"sendAs": items})
         if path.endswith("/messages") and request.method == "GET":
             wanted = request.url.params.get("q", "").split("from:", 1)[-1].split()[0].lower()
             return httpx.Response(200, json={"messages": [{"id": m["id"]} for m in self.inbox if wanted in m["from"].lower()]})

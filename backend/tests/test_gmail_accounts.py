@@ -150,3 +150,97 @@ async def test_an_application_is_sent_from_the_chosen_gmail_and_followed_up_from
 
     assert await job_followups.tick(js, now=utcnow() + timedelta(days=6)) == 1
     assert google.sent_with == ["at-rt-work", "at-rt-work"]
+
+
+ALIAS = "adnan@codevryn.com"
+
+
+async def test_a_verified_send_as_address_becomes_a_sender_through_its_gmail(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    gmail = (await client.get("/api/jobs/gmail")).json()["accounts"][0]
+    google.send_as = [(ALIAS, "accepted"), ("pending@codevryn.com", "pending")]
+
+    listed = (await client.get(f"/api/jobs/gmail/{gmail['id']}/send-as")).json()
+    assert {(a["email"], a["verified"], a["added"]) for a in listed} == {(ALIAS, True, False), ("pending@codevryn.com", False, False)}  # the primary is not offered
+
+    assert (await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": "other@codevryn.com"})).status_code == 422  # not in Gmail's list
+    unverified = await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": "pending@codevryn.com"})
+    assert unverified.status_code == 422 and "not verified" in unverified.json()["detail"]
+
+    added = await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})
+    assert added.status_code == 200 and added.json()["kind"] == "alias" and added.json()["parent_id"] == gmail["id"]
+    assert added.json()["sender_name"] == "Adnan Codevryn" and not added.json()["is_default"]
+    again = await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})
+    assert again.json()["id"] == added.json()["id"] and len((await client.get("/api/jobs/gmail")).json()["accounts"]) == 2
+
+
+async def test_a_campaign_sends_as_the_alias_through_gmail_and_shares_the_gmails_limits(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    gmail = (await client.get("/api/jobs/gmail")).json()["accounts"][0]
+    google.send_as = [(ALIAS, "accepted")]
+    alias = (await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})).json()
+    await client.put("/api/outreach/settings", json={"daily_limit": 1, "min_gap_seconds": 5, "skip_recent_days": 30, "bounce_pause_percent": 8, "model": "gemini-3.5-flash"})
+
+    business = await make_campaign(client, name="Business", followups=PLAN[:1], gmail_account_id=alias["id"])
+    personal = await make_campaign(client, name="Personal", gmail_account_id=gmail["id"])
+    await import_text(client, business["id"], "ann@acmelabs.io")
+    await import_text(client, personal["id"], "bob@globex.io")
+    await start(client, business["id"])
+    await start(client, personal["id"])
+    sent = [await engine.tick(js, now=at(i * 61)) for i in range(3)]
+    # One Gmail, one daily limit: the alias and the Gmail itself share it.
+    assert sum(sent) == 1
+    mail = sent_mail(google)[0]
+    assert ALIAS in mail["From"] and "me@gmail.com" not in mail["From"]
+    assert google.sent_with == ["at-rt-secret"]  # sent through the Gmail connection, over HTTPS
+
+    async with js.sessions() as session:
+        owner = (await session.scalars(select(Recipient).where(Recipient.gmail_account_id == alias["id"]))).one()
+    assert owner.email == "ann@acmelabs.io"
+
+    # The follow-up goes from the alias too, in the same thread.
+    await client.put("/api/outreach/settings", json={"daily_limit": 50, "min_gap_seconds": 5, "skip_recent_days": 30, "bounce_pause_percent": 8, "model": "gemini-3.5-flash"})
+    assert sum([await engine.tick(js, now=at(3 * DAY + 100 + i * 61)) for i in range(3)]) >= 1
+    follow = [m for m in sent_mail(google) if m["To"] == "ann@acmelabs.io"][-1]
+    assert ALIAS in follow["From"] and follow["In-Reply-To"] == mail["Message-ID"]
+
+
+async def test_removing_an_alias_or_its_gmail(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    gmail = (await client.get("/api/jobs/gmail")).json()["accounts"][0]
+    google.send_as = [(ALIAS, "accepted")]
+    alias = (await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})).json()
+    campaign = await make_campaign(client, gmail_account_id=alias["id"])
+    await import_text(client, campaign["id"], "ann@acmelabs.io")
+    await start(client, campaign["id"])
+
+    assert (await client.post(f"/api/jobs/gmail/{alias['id']}/disconnect")).status_code == 204
+    assert [a["email"] for a in (await client.get("/api/jobs/gmail")).json()["accounts"]] == ["me@gmail.com"]
+    assert not google.revoked  # the Gmail itself stays connected
+    assert (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()["status"] == "paused"
+
+    await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})
+    assert (await client.post(f"/api/jobs/gmail/{gmail['id']}/disconnect")).status_code == 204
+    assert (await client.get("/api/jobs/gmail")).json()["accounts"] == []  # the alias goes with its Gmail
+
+
+async def test_an_unused_smtp_mailbox_for_the_same_address_is_turned_into_the_alias(outreach, google):
+    from tests.test_smtp_accounts import add_mailbox, plug
+
+    client, js = outreach
+    plug(js)
+    await connect_gmail(client)
+    gmail = next(a for a in (await client.get("/api/jobs/gmail")).json()["accounts"])
+    smtp = await add_mailbox(client)
+    campaign = await make_campaign(client, gmail_account_id=smtp["id"])
+    google.send_as = [(ALIAS, "accepted")]
+
+    converted = await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})
+    assert converted.json()["id"] == smtp["id"] and converted.json()["kind"] == "alias"  # the campaign keeps pointing at it
+    assert (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()["gmail_account_id"] == smtp["id"]
+    async with js.sessions() as session:
+        stored = await session.get(GmailAccount, smtp["id"])
+    assert stored.smtp_password == "" and stored.smtp_host == ""
