@@ -821,3 +821,27 @@ async def test_the_waiting_message_says_which_window_and_time_zone_it_waits_for(
     async with js.sessions() as session:
         text = engine.window_reason(await session.get(Campaign, campaign["id"]), datetime(2026, 11, 1, 22, 0, tzinfo=timezone.utc))
     assert "09:00 to 18:00 UTC" in text and "weekdays only" in text and "Sun 22:00" in text and "Next send Mon 09:00" in text
+
+
+def test_a_column_that_says_it_holds_the_email_text_is_the_message():
+    for header in ("Email Content", "email_content", "Personalised Email", "Message", "Email Body", "Mail Text"):
+        text = f'email,name,{header},subject\nann@acmelabs.io,Ann,"Hi Ann,\n\nThe whole message.",Hello\n'
+        row = importer.parse(text).rows[0]
+        assert row.body == "Hi Ann,\n\nThe whole message." and row.subject == "Hello", header
+        assert importer.parse(text).columns == []  # it is the message, not a template variable
+
+    # Other columns stay variables, and an explicit body column wins over a guess.
+    text = "email,notes,body,email_content\nann@acmelabs.io,likes dogs,Real body,Other\n"
+    sheet = importer.parse(text)
+    assert sheet.rows[0].body == "Real body" and sheet.columns == ["notes", "email_content"]
+    assert importer.parse("email,last_message_date\nann@acmelabs.io,2026-01-01\n").rows[0].body == ""
+
+
+async def test_import_warns_when_a_long_text_column_was_not_taken_as_the_message(outreach):
+    client, _ = outreach
+    campaign = await make_campaign(client)
+    long_text = "word " * 60
+    res = await import_text(client, campaign["id"], f"email,notes\nann@acmelabs.io,{long_text}\n")
+    assert res["warnings"] and "'notes'" in res["warnings"][0]
+    ok = await make_campaign(client, name="Fine")
+    assert (await import_text(client, ok["id"], f"email,email_content\nann@acmelabs.io,{long_text}\n"))["warnings"] == []
