@@ -26,10 +26,10 @@ class OutreachSettings(BaseModel):
     default_min_delay_seconds: int = Field(45, ge=15, le=3600)
     default_max_delay_seconds: int = Field(150, ge=15, le=7200)
     default_campaign_daily_limit: int = Field(40, ge=1, le=400)
-    default_window_start_hour: int = Field(9, ge=0, le=23)
-    default_window_end_hour: int = Field(18, ge=1, le=24)
+    default_window_start_hour: int = Field(0, ge=0, le=23)
+    default_window_end_hour: int = Field(24, ge=1, le=24)
     default_timezone: str = "UTC"
-    default_weekdays_only: bool = True
+    default_weekdays_only: bool = False
     default_ramp_up: bool = True
 
     @field_validator("default_timezone")
@@ -63,10 +63,10 @@ class CampaignIn(BaseModel):
     min_delay_seconds: int = Field(45, ge=15, le=3600)
     max_delay_seconds: int = Field(150, ge=15, le=7200)
     daily_limit: int = Field(40, ge=1, le=400)
-    window_start_hour: int = Field(9, ge=0, le=23)
-    window_end_hour: int = Field(18, ge=1, le=24)
+    window_start_hour: int = Field(0, ge=0, le=23)
+    window_end_hour: int = Field(24, ge=1, le=24)
     timezone: str = "UTC"
-    weekdays_only: bool = True
+    weekdays_only: bool = False
     ramp_up: bool = True
     followups: list[FollowUp] = Field(default=[], max_length=5)
 

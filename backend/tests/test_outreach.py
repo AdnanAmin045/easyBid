@@ -798,7 +798,7 @@ def test_columns_in_any_order_are_told_apart_by_content():
 async def test_new_campaign_defaults_are_kept_in_settings_and_validated(outreach):
     client, _ = outreach
     saved = (await client.get("/api/outreach/settings")).json()
-    assert saved["default_window_start_hour"] == 9 and saved["default_timezone"] == "UTC"  # the old behaviour until changed
+    assert saved["default_window_start_hour"] == 0 and saved["default_window_end_hour"] == 24  # around the clock until changed
 
     changed = {**saved, "default_timezone": "Asia/Karachi", "default_window_start_hour": 8, "default_window_end_hour": 20, "default_weekdays_only": False}
     res = await client.put("/api/outreach/settings", json=changed)
