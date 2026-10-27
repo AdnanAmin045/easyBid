@@ -12,9 +12,10 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_, select, update
 
 from app.config import get_env
+from app.jobs import accounts
 from app.jobs import gmail as gmail_lib
 from app.jobs.gmail import GmailError
-from app.jobs.models import ApplicationStatus, JobApplication, JobResume
+from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobResume
 from app.jobs.schemas import JobSettings
 from app.models import utcnow
 from app.outreach import engine, render
@@ -84,24 +85,9 @@ async def _mark_outcome(session, application: JobApplication, outcome: str) -> N
 async def send_due(js, now: datetime) -> int:
     """Send at most one due follow-up. Returns 1 when an email went out."""
     async with js.sessions() as session:
-        account = await store.get_config(session, engine.GMAIL_KEY)
-        if not account:
+        if not await accounts.any_connected(session):
             return 0
         s = await engine.outreach_settings(session)
-        if await engine.delivered_since(session, now - timedelta(hours=24), now) >= s.daily_limit:
-            return 0
-        last = max(
-            filter(
-                None,
-                [
-                    await engine.last_send(session, now),
-                    await session.scalar(select(func.max(JobApplication.last_contact_at)).where(JobApplication.last_contact_at <= now)),
-                ],
-            ),
-            default=None,
-        )
-        if last and (now - last).total_seconds() < s.min_gap_seconds:
-            return 0
 
         rows = await session.scalars(
             select(JobApplication)
@@ -110,6 +96,7 @@ async def send_due(js, now: datetime) -> int:
                 JobApplication.outcome == "",
                 JobApplication.followup_claim_at.is_(None),
                 JobApplication.gmail_thread_id.is_not(None),
+                JobApplication.gmail_account_id.is_not(None),
                 JobApplication.last_contact_at.is_not(None),
                 func.jsonb_array_length(JobApplication.followups) > JobApplication.followups_sent,
                 or_(JobApplication.followup_retry_at.is_(None), JobApplication.followup_retry_at <= now),
@@ -118,10 +105,19 @@ async def send_due(js, now: datetime) -> int:
             .limit(50)
             .with_for_update(skip_locked=True)
         )
-        application = next(
-            (a for a in rows if a.last_contact_at + timedelta(days=a.followups[a.followups_sent]["days"]) <= now), None
-        )
+        application = None
+        for candidate in rows:
+            if candidate.last_contact_at + timedelta(days=candidate.followups[candidate.followups_sent]["days"]) > now:
+                continue
+            # The follow-up goes from the Gmail the application went from, under that Gmail's own limits.
+            if await engine.account_reason(session, candidate.gmail_account_id, now, s):
+                continue
+            application = candidate
+            break
         if application is None:
+            return 0
+        account = await session.get(GmailAccount, application.gmail_account_id)
+        if account is None:
             return 0
         step = application.followups_sent
         application.followup_claim_at = now
@@ -129,7 +125,7 @@ async def send_due(js, now: datetime) -> int:
         return await _deliver(js, session, application, step, account, now)
 
 
-async def _deliver(js, session, application: JobApplication, step: int, account: dict, now: datetime) -> bool:
+async def _deliver(js, session, application: JobApplication, step: int, account: GmailAccount, now: datetime) -> bool:
     def settle(note: str | None = None, skip: bool = False, retry_in: timedelta | None = None) -> bool:
         application.followup_claim_at = None
         application.followup_note = note
@@ -150,12 +146,12 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         await session.commit()
         return False
     try:
-        refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
+        refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
         # Never follow up blind: look at the conversation, and at anything else they have written, first.
         outcome = await engine.thread_outcome(
             js,
             refresh,
-            account["email"],
+            account.email,
             application.gmail_thread_id,
             application.gmail_message_id,
             application.to_email,
@@ -171,7 +167,7 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         await session.commit()
         return False
 
-    jobs = await engine.jobs_settings(session)
+    jobs = accounts.identity(await engine.jobs_settings(session), account)
     composed = compose(application, step, jobs)
     if composed.missing or not composed.body.strip():
         settle(f"Follow-up {step + 1} skipped: missing value for {', '.join(composed.missing) or 'the message'}", skip=True)
@@ -183,7 +179,7 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == application.resume_id))
         attachment = gmail_lib.Attachment(application.resume.filename, application.resume.content_type, data)
     message = gmail_lib.build_message(
-        sender_email=account["email"],
+        sender_email=account.email,
         sender_name=jobs.sender_name,
         to=application.to_email,
         cc=[],
@@ -226,8 +222,7 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
 async def check_replies(js, now: datetime) -> None:
     """Look at a few sent applications for an answer, so the list shows who replied or bounced."""
     async with js.sessions() as session:
-        account = await store.get_config(session, engine.GMAIL_KEY)
-        if not account:
+        if not await accounts.any_connected(session):
             return
         left = func.jsonb_array_length(JobApplication.followups) > JobApplication.followups_sent
         rows = list(
@@ -237,6 +232,7 @@ async def check_replies(js, now: datetime) -> None:
                     JobApplication.status == ApplicationStatus.SENT,
                     JobApplication.outcome == "",
                     JobApplication.gmail_thread_id.is_not(None),
+                    JobApplication.gmail_account_id.is_not(None),
                     or_(
                         (JobApplication.sent_at > now - WATCH_DEFAULT),
                         left & (JobApplication.sent_at > now - WATCH_FOLLOWUPS),
@@ -253,18 +249,19 @@ async def check_replies(js, now: datetime) -> None:
         )
         if not rows:
             return
-        try:
-            refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
-        except GmailError:
-            return
+        mailboxes = {a.id: a for a in await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})))}
         for application in rows:
             application.checked_at = now
+            account = mailboxes.get(application.gmail_account_id)
+            if account is None:
+                continue  # its Gmail was disconnected, there is nothing left to read
             try:
+                refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
                 messages = await js.gmail.thread(refresh, application.gmail_thread_id)
             except GmailError as e:
                 logger.warning("Could not read thread %s: %s", application.gmail_thread_id, e)
                 continue
-            outcome = engine.classify_thread(messages, account["email"], application.gmail_message_id)
+            outcome = engine.classify_thread(messages, account.email, application.gmail_message_id)
             if outcome is None:
                 try:
                     if await js.gmail.answered_by(refresh, application.to_email, application.sent_at):

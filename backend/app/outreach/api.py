@@ -16,9 +16,10 @@ from app.config import get_env
 from app.db import get_session
 from app.jobs import extract as extraction
 from app.jobs import gmail as gmail_lib
-from app.jobs.api import GMAIL_KEY, JobServices, job_services
+from app.jobs import accounts
+from app.jobs.api import JobServices, job_services
 from app.jobs.gmail import Attachment, GmailError
-from app.jobs.models import JobResume
+from app.jobs.models import GmailAccount, JobResume
 from app.models import utcnow
 from app.outreach import engine, importer, render, writer
 from app.outreach import schemas
@@ -116,12 +117,12 @@ async def _out(session: AsyncSession, campaign: Campaign) -> schemas.CampaignOut
 async def overview(session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)) -> dict:
     now = utcnow()
     s = await engine.outreach_settings(session)
-    account = await store.get_config(session, GMAIL_KEY)
+    account = await accounts.default_account(session)
     campaigns = dict((await session.execute(select(Campaign.status, func.count()).group_by(Campaign.status))).all())
     recipients = dict((await session.execute(select(Recipient.status, func.count()).group_by(Recipient.status))).all())
     recent = list(await session.scalars(select(Campaign).order_by(Campaign.created_at.desc()).limit(5)))
     return {
-        "gmail": {"configured": js.gmail.configured, "connected": bool(account), "email": account.get("email")},
+        "gmail": {"configured": js.gmail.configured, "connected": account is not None, "email": account.email if account else None},
         "ai_problem": js.llm.model_problem(s.model),
         "sent_24h": await engine.delivered_since(session, now - timedelta(hours=24), now),
         "daily_limit": s.daily_limit,
@@ -208,6 +209,11 @@ async def generate_template(
 # --- campaigns --------------------------------------------------------------------
 
 
+async def _check_account(session: AsyncSession, account_id: int | None) -> None:
+    if account_id is not None and await session.get(GmailAccount, account_id) is None:
+        raise HTTPException(404, "Gmail account not found")
+
+
 async def _resume_for(session: AsyncSession, resume_id: int | None) -> JobResume | None:
     if resume_id is None:
         return None
@@ -228,6 +234,7 @@ def _validated(data: dict) -> schemas.CampaignIn:
 @router.post("/campaigns", response_model=schemas.CampaignOut)
 async def create_campaign(body: schemas.CampaignIn, session: AsyncSession = Depends(get_session)):
     resume = await _resume_for(session, body.resume_id)
+    await _check_account(session, body.gmail_account_id)
     campaign = Campaign(**body.model_dump(), resume=resume)
     session.add(campaign)
     await session.flush()
@@ -268,10 +275,11 @@ async def update_campaign(campaign_id: int, body: schemas.CampaignPatch, session
     if "mode" in changes and changes["mode"] != campaign.mode and campaign.status == CampaignStatus.RUNNING:
         raise HTTPException(409, "Pause the campaign before changing how its emails are written")
     current = schemas.CampaignIn.model_validate(campaign, from_attributes=True).model_dump()
-    merged = _validated({**current, **{k: v for k, v in changes.items() if v is not None or k == "resume_id"}})
+    merged = _validated({**current, **{k: v for k, v in changes.items() if v is not None or k in ("resume_id", "gmail_account_id")}})
     if body.clear_resume:
         merged.resume_id = None
     resume = await _resume_for(session, merged.resume_id)
+    await _check_account(session, merged.gmail_account_id)
     if merged.model_dump()["followups"] != campaign.followups:
         _reopen(campaign)  # a finished campaign with a new follow-up has more to send
     for field, value in merged.model_dump().items():
@@ -306,13 +314,18 @@ async def _pending(session: AsyncSession, campaign_id: int) -> list[Recipient]:
 
 async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> schemas.Check:
     s = await engine.outreach_settings(session)
-    jobs = await engine.jobs_settings(session)
+    jobs = await engine.campaign_identity(session, campaign)
     pending = await _pending(session, campaign.id)
     blockers: list[str] = []
     warnings: list[str] = []
 
-    if not await store.get_config(session, GMAIL_KEY):
-        blockers.append("Connect Gmail in Email settings first.")
+    account = await accounts.resolve(session, campaign.gmail_account_id)
+    if account is None:
+        blockers.append(
+            "Connect Gmail in Email settings first."
+            if campaign.gmail_account_id is None
+            else "The Gmail this campaign sends from was disconnected. Choose another one in the campaign."
+        )
     if not pending:
         blockers.append("There is nobody left to send to. Add recipients first.")
 
@@ -670,7 +683,7 @@ async def generate_for_recipient(
     if not campaign.ai_brief.strip():
         raise HTTPException(409, "Add a brief to the campaign first")
     s = await engine.outreach_settings(session)
-    jobs = await engine.jobs_settings(session)
+    jobs = await engine.campaign_identity(session, campaign)
     problem = js.llm.model_problem(s.model)
     if problem:
         raise HTTPException(409, problem)
@@ -700,7 +713,7 @@ async def preview(
         )
         if recipient is None:
             raise HTTPException(404, "Add recipients to see a preview")
-    jobs = await engine.jobs_settings(session)
+    jobs = await engine.campaign_identity(session, campaign)
     if step > 0:
         if step > len(campaign.followups):
             raise HTTPException(404, "This campaign has no such follow-up")
@@ -727,33 +740,33 @@ async def test_send(
 ) -> dict:
     """Send one rendered email to your own Gmail address, to see it as the recipient will."""
     campaign = await _campaign(session, campaign_id)
-    account = await store.get_config(session, GMAIL_KEY)
-    if not account:
+    account = await accounts.resolve(session, campaign.gmail_account_id)
+    if account is None:
         raise HTTPException(409, "Connect Gmail in Email settings first")
     preview_ = await preview(campaign_id, body.recipient_id, 0, session)
     if preview_.missing:
         raise HTTPException(422, "Missing value for: " + ", ".join(preview_.missing))
     if not preview_.subject or not preview_.body.strip():
         raise HTTPException(422, "The email has no subject or no message yet")
-    jobs = await engine.jobs_settings(session)
+    jobs = accounts.identity(await engine.jobs_settings(session), account)
     attachment = None
     if campaign.attach_first and campaign.resume_id and campaign.resume:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(
-        sender_email=account["email"],
+        sender_email=account.email,
         sender_name=jobs.sender_name,
-        to=account["email"],
+        to=account.email,
         cc=[],
         subject=f"[TEST] {preview_.subject}",
         body=preview_.body,
         attachment=attachment,
     )
     try:
-        await js.gmail.send(gmail_lib.decrypt(account["refresh_token"], get_env().secret_key), message)
+        await js.gmail.send(gmail_lib.decrypt(account.refresh_token, get_env().secret_key), message)
     except GmailError as e:
         raise HTTPException(502, str(e)) from e
-    return {"sent_to": account["email"]}
+    return {"sent_to": account.email}
 
 
 def _cell(value) -> str:

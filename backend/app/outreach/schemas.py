@@ -60,6 +60,8 @@ class CampaignIn(BaseModel):
     append_signature: bool = True
     resume_id: int | None = None
     attach_first: bool = True
+    # The Gmail the campaign sends from; None means the default account.
+    gmail_account_id: int | None = None
     min_delay_seconds: int = Field(45, ge=15, le=3600)
     max_delay_seconds: int = Field(150, ge=15, le=7200)
     daily_limit: int = Field(40, ge=1, le=400)
@@ -103,6 +105,7 @@ class CampaignPatch(BaseModel):
     footer: str | None = None
     append_signature: bool | None = None
     resume_id: int | None = None
+    gmail_account_id: int | None = None
     attach_first: bool | None = None
     clear_resume: bool = False
     min_delay_seconds: int | None = None
@@ -140,6 +143,7 @@ class CampaignOut(CampaignBrief):
     footer: str
     append_signature: bool
     resume_id: int | None
+    gmail_account_id: int | None = None
     attach_first: bool = True
     resume: ResumeOut | None
     min_delay_seconds: int

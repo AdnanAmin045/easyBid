@@ -15,9 +15,10 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_env
+from app.jobs import accounts
 from app.jobs import gmail as gmail_lib
 from app.jobs.gmail import Attachment, GmailError
-from app.jobs.models import ApplicationStatus, JobApplication, JobResume
+from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobResume
 from app.jobs.schemas import JobSettings
 from app.models import utcnow
 from app.outreach import render, writer
@@ -30,7 +31,6 @@ logger = logging.getLogger("easybid")
 
 SETTINGS_KEY = "outreach_settings"
 JOBS_SETTINGS_KEY = "jobs_settings"
-GMAIL_KEY = "jobs_gmail"
 
 MAX_ATTEMPTS = 3
 STUCK_AFTER = timedelta(minutes=10)  # a recipient stuck in "sending" means the server stopped mid-send
@@ -47,6 +47,13 @@ async def outreach_settings(session: AsyncSession) -> OutreachSettings:
 
 async def jobs_settings(session: AsyncSession) -> JobSettings:
     return JobSettings(**await store.get_config(session, JOBS_SETTINGS_KEY))
+
+
+async def campaign_identity(session: AsyncSession, campaign: Campaign) -> JobSettings:
+    """The Jobs settings with the name and signature of the Gmail this campaign sends from, as the emails will carry them."""
+    jobs = await jobs_settings(session)
+    account = await accounts.resolve(session, campaign.gmail_account_id)
+    return accounts.identity(jobs, account) if account else jobs
 
 
 # --- rules ------------------------------------------------------------------------
@@ -81,19 +88,39 @@ def daily_allowance(campaign: Campaign, now: datetime) -> int:
     return campaign.daily_limit
 
 
-async def delivered_since(session: AsyncSession, since: datetime, now: datetime, campaign_id: int | None = None) -> int:
+async def delivered_since(
+    session: AsyncSession, since: datetime, now: datetime, campaign_id: int | None = None, account_id: int | None = None
+) -> int:
+    """Emails sent in the window by one campaign, or by one Gmail account (campaigns and applications together)."""
     query = select(func.count()).select_from(Recipient).where(Recipient.last_contact_at > since, Recipient.last_contact_at <= now)
     if campaign_id is not None:
         return await session.scalar(query.where(Recipient.campaign_id == campaign_id)) or 0
     applications = select(func.count()).where(
         JobApplication.status == ApplicationStatus.SENT, JobApplication.last_contact_at > since, JobApplication.last_contact_at <= now
     )
+    if account_id is not None:
+        query, applications = query.where(Recipient.gmail_account_id == account_id), applications.where(JobApplication.gmail_account_id == account_id)
     # One Gmail account sends both, so both count against its limit.
     return (await session.scalar(query) or 0) + (await session.scalar(applications) or 0)
 
 
-async def last_send(session: AsyncSession, now: datetime) -> datetime | None:
-    return await session.scalar(select(func.max(Recipient.last_contact_at)).where(Recipient.last_contact_at <= now))
+async def last_send(session: AsyncSession, now: datetime, account_id: int | None = None) -> datetime | None:
+    """When this Gmail account last sent anything (a campaign email or a Jobs application)."""
+    recipients = select(func.max(Recipient.last_contact_at)).where(Recipient.last_contact_at <= now)
+    applications = select(func.max(JobApplication.last_contact_at)).where(JobApplication.last_contact_at <= now)
+    if account_id is not None:
+        recipients, applications = recipients.where(Recipient.gmail_account_id == account_id), applications.where(JobApplication.gmail_account_id == account_id)
+    return max(filter(None, [await session.scalar(recipients), await session.scalar(applications)]), default=None)
+
+
+async def account_reason(session: AsyncSession, account_id: int, now: datetime, s: OutreachSettings) -> str | None:
+    """Why this Gmail account cannot send right now (its own daily limit and the gap between two emails), or None."""
+    if await delivered_since(session, now - timedelta(hours=24), now, account_id=account_id) >= s.daily_limit:
+        return f"Account limit reached ({s.daily_limit} emails in 24 hours from this Gmail)"
+    last = await last_send(session, now, account_id)
+    if last and (now - last).total_seconds() < s.min_gap_seconds:
+        return "Waiting for the gap between two emails from this Gmail"
+    return None
 
 
 async def waiting_reason(session: AsyncSession, campaign: Campaign, now: datetime, s: OutreachSettings) -> str | None:
@@ -104,8 +131,11 @@ async def waiting_reason(session: AsyncSession, campaign: Campaign, now: datetim
     day = now - timedelta(hours=24)
     if await delivered_since(session, day, now, campaign.id) >= daily_allowance(campaign, now):
         return f"Daily limit reached ({daily_allowance(campaign, now)} in 24 hours)"
-    if await delivered_since(session, day, now) >= s.daily_limit:
-        return f"Account limit reached ({s.daily_limit} emails in 24 hours across all campaigns)"
+    account = await accounts.resolve(session, campaign.gmail_account_id)
+    if account is None:
+        return "The Gmail this campaign sends from is no longer connected"
+    if await delivered_since(session, day, now, account_id=account.id) >= s.daily_limit:
+        return f"Account limit reached ({s.daily_limit} emails in 24 hours from {account.email}, across all its campaigns)"
     return None
 
 
@@ -307,8 +337,14 @@ def compose_followup(campaign: Campaign, recipient: Recipient, step: int, jobs: 
     return Composed(subject=" ".join(subject.split()), body=text, missing=list(dict.fromkeys(body.missing + own_subject.missing)))
 
 
-async def _claim_followup(session: AsyncSession, campaign: Campaign, now: datetime) -> tuple[Recipient, int] | None:
-    """The next person whose follow-up is due, marked as being sent. (recipient, step index)."""
+async def _claim_followup(
+    session: AsyncSession, campaign: Campaign, now: datetime, s: OutreachSettings, gated_account_id: int
+) -> tuple[Recipient, int] | None:
+    """The next person whose follow-up is due, marked as being sent. (recipient, step index).
+
+    A follow-up goes from the Gmail the first email went from. `gated_account_id` is the account whose limits were
+    already checked; anyone from another account (the campaign was switched) has that account checked here.
+    """
     plan = campaign.followups or []
     if not plan:
         return None
@@ -330,6 +366,10 @@ async def _claim_followup(session: AsyncSession, campaign: Campaign, now: dateti
     for recipient in rows:
         step = recipient.followups_sent
         if recipient.last_contact_at + timedelta(days=plan[step]["days"]) <= now:
+            if recipient.gmail_account_id not in (None, gated_account_id) and await account_reason(
+                session, recipient.gmail_account_id, now, s
+            ):
+                continue
             recipient.status = RecipientStatus.SENDING
             return recipient, step
     return None
@@ -359,17 +399,18 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         await session.commit()
         return False
 
-    account = await store.get_config(session, GMAIL_KEY)
-    if not account:
-        settle()
-        await _pause(session, [campaign.id], "Gmail is not connected", js.notify)
+    # The conversation lives in the mailbox the first email went from, so the follow-up goes from there too.
+    account = await accounts.resolve(session, recipient.gmail_account_id) if recipient.gmail_account_id else None
+    if account is None:
+        recipient.followups_sent = len(campaign.followups)
+        settle("Sent from a Gmail account that is no longer connected, no follow-ups")
         await session.commit()
         return False
     try:
-        refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
+        refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
         # Never follow up blind: look at the conversation, and at anything else they have written, first.
         outcome = await thread_outcome(
-            js, refresh, account["email"], recipient.gmail_thread_id, recipient.gmail_message_id, recipient.email, recipient.sent_at
+            js, refresh, account.email, recipient.gmail_thread_id, recipient.gmail_message_id, recipient.email, recipient.sent_at
         )
     except GmailError as e:
         settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
@@ -385,7 +426,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         await session.commit()
         return False
 
-    jobs = await jobs_settings(session)
+    jobs = accounts.identity(await jobs_settings(session), account)
     composed = compose_followup(campaign, recipient, step, jobs)
     if composed.missing or not composed.body.strip():
         settle("Follow-up %d skipped: missing value for %s" % (step + 1, ", ".join(composed.missing) or "the message"), skip=True)
@@ -397,7 +438,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(
-        sender_email=account["email"],
+        sender_email=account.email,
         sender_name=jobs.sender_name,
         to=recipient.email,
         cc=[],
@@ -450,7 +491,10 @@ async def send_next(js, campaign_id: int, now: datetime) -> bool:
             return False
         if await waiting_reason(session, campaign, now, s):
             return False
-        last = await last_send(session, now)
+        account = await accounts.resolve(session, campaign.gmail_account_id)
+        if account is None:
+            return False
+        last = await last_send(session, now, account.id)
         if last and (now - last).total_seconds() < s.min_gap_seconds:
             return False
 
@@ -470,7 +514,7 @@ async def send_next(js, campaign_id: int, now: datetime) -> bool:
             return False
 
         # Follow-ups that are due go first: those people are already warm.
-        due = await _claim_followup(session, campaign, now)
+        due = await _claim_followup(session, campaign, now, s, account.id)
         if due:
             await session.commit()
             return await _deliver_followup(js, session, campaign, due[0], due[1], now)
@@ -505,6 +549,14 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
             await session.commit()
             return False
 
+    account = await accounts.resolve(session, campaign.gmail_account_id)
+    if account is None:
+        recipient.status, recipient.attempts = RecipientStatus.PENDING, recipient.attempts - 1
+        await _pause(session, [campaign.id], "The Gmail this campaign sends from is not connected", js.notify)
+        await session.commit()
+        return False
+    jobs = accounts.identity(jobs, account)
+
     composed = compose(campaign, recipient, jobs)
     problem = None
     if composed.missing:
@@ -519,19 +571,12 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         await session.commit()
         return False
 
-    account = await store.get_config(session, GMAIL_KEY)
-    if not account:
-        recipient.status, recipient.attempts = RecipientStatus.PENDING, recipient.attempts - 1
-        await _pause(session, [campaign.id], "Gmail is not connected", js.notify)
-        await session.commit()
-        return False
-
     attachment = None
     if campaign.attach_first and campaign.resume_id and campaign.resume:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(
-        sender_email=account["email"],
+        sender_email=account.email,
         sender_name=jobs.sender_name,
         to=recipient.email,
         cc=[],
@@ -540,7 +585,7 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         attachment=attachment,
     )
     try:
-        result = await js.gmail.send(gmail_lib.decrypt(account["refresh_token"], get_env().secret_key), message)
+        result = await js.gmail.send(gmail_lib.decrypt(account.refresh_token, get_env().secret_key), message)
     except GmailError as e:
         await _handle_send_error(js, session, campaign, recipient, e, now)
         await session.commit()
@@ -550,6 +595,7 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
     recipient.sent_at = recipient.last_contact_at = now
     recipient.sent_subject, recipient.rfc_id = composed.subject, str(message["Message-ID"])
     recipient.gmail_message_id, recipient.gmail_thread_id = result.get("id"), result.get("threadId")
+    recipient.gmail_account_id = account.id
     store.log_event(session, "outreach_sent", f"Sent to {recipient.email} ({campaign.name})")
     await session.commit()
     return True
@@ -661,8 +707,7 @@ def classify_thread(messages: list[dict], my_email: str, sent_id: str | None) ->
 
 async def check_replies(js, now: datetime) -> None:
     async with js.sessions() as session:
-        account = await store.get_config(session, GMAIL_KEY)
-        if not account:
+        if not await accounts.any_connected(session):
             return
         s = await outreach_settings(session)
         recent = now - timedelta(days=1)
@@ -672,6 +717,7 @@ async def check_replies(js, now: datetime) -> None:
                 .where(
                     Recipient.status == RecipientStatus.SENT,
                     Recipient.gmail_thread_id.is_not(None),
+                    Recipient.gmail_account_id.is_not(None),
                     Recipient.sent_at > now - REPLY_WINDOW,
                     # Fresh sends are looked at often, older ones every few hours.
                     or_(
@@ -686,19 +732,23 @@ async def check_replies(js, now: datetime) -> None:
         )
         if not rows:
             return
-        try:
-            refresh = gmail_lib.decrypt(account["refresh_token"], get_env().secret_key)
-        except GmailError:
-            return
+        mailboxes = {a.id: a for a in await session.scalars(select(GmailAccount).where(GmailAccount.id.in_({r.gmail_account_id for r in rows})))}
         touched: set[int] = set()
         for recipient in rows:
             recipient.checked_at = now
+            account = mailboxes.get(recipient.gmail_account_id)
+            if account is None:
+                continue  # its Gmail was disconnected, there is nothing left to read
+            try:
+                refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
+            except GmailError:
+                continue
             try:
                 messages = await js.gmail.thread(refresh, recipient.gmail_thread_id)
             except GmailError as e:
                 logger.warning("Could not read thread %s: %s", recipient.gmail_thread_id, e)
                 continue
-            outcome = classify_thread(messages, account["email"], recipient.gmail_message_id)
+            outcome = classify_thread(messages, account.email, recipient.gmail_message_id)
             if outcome is None:
                 try:
                     if await js.gmail.answered_by(refresh, recipient.email, recipient.sent_at):
@@ -765,16 +815,22 @@ async def recover_stuck(js, now: datetime) -> None:
 
 
 async def tick(js, now: datetime | None = None) -> int:
-    """One pass of the sender. Returns how many emails went out (0 or 1)."""
+    """One pass of the sender. Returns how many emails went out: at most one per Gmail account."""
     now = now or utcnow()
     await recover_stuck(js, now)
     async with js.sessions() as session:
         running = list(await session.scalars(select(Campaign.id).where(Campaign.status == CampaignStatus.RUNNING).order_by(Campaign.id)))
     sent = 0
+    busy: set[int] = set()  # Gmail accounts that already sent this pass; the gap between two emails forbids a second
     for campaign_id in running:
+        async with js.sessions() as session:
+            campaign = await session.get(Campaign, campaign_id)
+            account = await accounts.resolve(session, campaign.gmail_account_id) if campaign else None
+        if account is None or account.id in busy:
+            continue
         if await send_next(js, campaign_id, now):
-            sent = 1
-            break  # one email per pass; the account-wide gap also forbids a second
+            sent += 1
+            busy.add(account.id)
     await generate_ahead(js, now)
     await check_replies(js, now)
     return sent
