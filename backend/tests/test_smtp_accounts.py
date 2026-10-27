@@ -259,3 +259,28 @@ def test_a_failed_connection_says_what_happened_with_each_address():
         connect("localhost", 1, 3)  # resolves to IPv6 and IPv4, nothing listens on either
     text = str(raised.value)
     assert "IPv4 127.0.0.1" in text and text.index("IPv4") < (text.index("IPv6") if "IPv6" in text else len(text))
+
+
+async def test_an_unreachable_mail_server_pauses_the_campaign_without_failing_anyone(outreach, google):
+    client, js = outreach
+    world = plug(js)
+    account = await add_mailbox(client)
+    campaign = await make_campaign(client, gmail_account_id=account["id"])
+    await import_text(client, campaign["id"], "a@acmelabs.io\nb@acmelabs.io")
+    await start(client, campaign["id"])
+
+    def unreachable(*args, **kwargs):
+        raise OSError("IPv4 172.65.255.143: timed out")
+
+    js.smtp.smtp_ssl = unreachable
+    for i in range(3):
+        assert await engine.tick(js, now=at(i * 61)) == 0
+    state = (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()
+    assert state["status"] == "paused" and "Nothing was sent" in state["pause_reason"] and "timed out" in state["pause_reason"]
+    rows = await recipients(client, campaign["id"])
+    assert [(r["status"], r["attempts"]) for r in rows] == [("pending", 0), ("pending", 0)]  # nobody was marked failed
+
+    # Once the connection works again, resuming sends them.
+    js.smtp.smtp_ssl = world.SMTP
+    await start(client, campaign["id"])
+    assert await engine.tick(js, now=at(1000)) == 1 and len(world.sent) == 1
