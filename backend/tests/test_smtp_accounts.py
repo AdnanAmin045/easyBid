@@ -273,14 +273,17 @@ async def test_an_unreachable_mail_server_pauses_the_campaign_without_failing_an
         raise OSError("IPv4 172.65.255.143: timed out")
 
     js.smtp.smtp_ssl = unreachable
-    for i in range(3):
-        assert await engine.tick(js, now=at(i * 61)) == 0
-    state = (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()
+    # A connection that fails is tried again a few minutes later, and only keeps failing for so long before the campaign pauses.
+    for i in range(40):
+        await engine.tick(js, now=at(i * 70))
+        state = (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()
+        if state["status"] == "paused":
+            break
     assert state["status"] == "paused" and "Nothing was sent" in state["pause_reason"] and "timed out" in state["pause_reason"]
     rows = await recipients(client, campaign["id"])
-    assert [(r["status"], r["attempts"]) for r in rows] == [("pending", 0), ("pending", 0)]  # nobody was marked failed
+    assert all(r["status"] == "pending" for r in rows) and not world.sent  # nobody was marked failed
 
     # Once the connection works again, resuming sends them.
     js.smtp.smtp_ssl = world.SMTP
     await start(client, campaign["id"])
-    assert await engine.tick(js, now=at(1000)) == 1 and len(world.sent) == 1
+    assert await engine.tick(js, now=at(5000)) == 1 and len(world.sent) == 1
