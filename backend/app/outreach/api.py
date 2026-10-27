@@ -12,13 +12,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_env
 from app.db import get_session
 from app.jobs import extract as extraction
 from app.jobs import gmail as gmail_lib
 from app.jobs import accounts
 from app.jobs.api import JobServices, job_services
 from app.jobs.gmail import Attachment, GmailError
+from app.jobs.mailbox import open_mailbox
 from app.jobs.models import GmailAccount, JobResume
 from app.models import utcnow
 from app.outreach import engine, importer, render, writer
@@ -763,7 +763,7 @@ async def test_send(
         attachment=attachment,
     )
     try:
-        await js.gmail.send(gmail_lib.decrypt(account.refresh_token, get_env().secret_key), message)
+        await open_mailbox(js, account).send(message)
     except GmailError as e:
         raise HTTPException(502, str(e)) from e
     return {"sent_to": account.email}

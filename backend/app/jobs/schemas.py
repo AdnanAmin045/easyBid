@@ -180,10 +180,37 @@ class GmailAccountOut(BaseModel):
 
     id: int
     email: str
+    kind: Literal["gmail", "smtp"] = "gmail"
+    smtp_host: str = ""
     is_default: bool
     sender_name: str
     signature: str
     connected_at: datetime
+
+
+class SmtpAccountIn(BaseModel):
+    """A mailbox that is not Gmail: SMTP to send, IMAP to read the answers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+    smtp_host: str = Field(min_length=3, max_length=255)
+    smtp_port: int = Field(465, ge=1, le=65535)
+    smtp_secure: bool = True  # TLS from the start (port 465). Off means STARTTLS (port 587)
+    smtp_user: str = Field("", max_length=320)  # the login; the email address when empty
+    smtp_password: str = Field(min_length=1, max_length=500)
+    imap_host: str = Field(min_length=3, max_length=255)
+    imap_port: int = Field(993, ge=1, le=65535)
+    sender_name: str = Field("", max_length=120)
+    signature: str = Field("", max_length=1000)
+
+    @field_validator("smtp_host", "imap_host")
+    @classmethod
+    def host_only(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "/" in value or " " in value or ":" in value:
+            raise ValueError("Enter the server name only, e.g. smtp.hostinger.com, and put the port in its own box")
+        return value
 
 
 class GmailAccountPatch(BaseModel):

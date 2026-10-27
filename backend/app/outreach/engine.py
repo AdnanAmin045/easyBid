@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_env
 from app.jobs import accounts
 from app.jobs import gmail as gmail_lib
+from app.jobs.mailbox import Mailbox, open_mailbox
 from app.jobs.gmail import Attachment, GmailError
 from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobResume
 from app.jobs.schemas import JobSettings
@@ -246,13 +246,13 @@ async def replied_before(session: AsyncSession, emails: list[str], exclude_recip
     return found
 
 
-async def thread_outcome(js, refresh: str, my_email: str, thread_id: str, sent_id: str | None, to: str, since: datetime) -> str | None:
+async def thread_outcome(mailbox: Mailbox, my_email: str, thread_id: str, sent_id: str | None, to: str, since: datetime) -> str | None:
     """REPLIED or BOUNCED for a sent email: the answer may be in its thread, or in a new conversation from the same address.
 
-    Raises GmailError when Gmail cannot be read, so callers never act on a guess.
+    Raises GmailError when the mailbox cannot be read, so callers never act on a guess.
     """
-    outcome = classify_thread(await js.gmail.thread(refresh, thread_id), my_email, sent_id)
-    if outcome is None and await js.gmail.answered_by(refresh, to, since):
+    outcome = classify_thread(await mailbox.thread(thread_id), my_email, sent_id)
+    if outcome is None and await mailbox.answered_by(to, since):
         outcome = RecipientStatus.REPLIED
     return outcome
 
@@ -407,10 +407,10 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         await session.commit()
         return False
     try:
-        refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
+        mailbox = open_mailbox(js, account)
         # Never follow up blind: look at the conversation, and at anything else they have written, first.
         outcome = await thread_outcome(
-            js, refresh, account.email, recipient.gmail_thread_id, recipient.gmail_message_id, recipient.email, recipient.sent_at
+            mailbox, account.email, recipient.gmail_thread_id, recipient.gmail_message_id, recipient.email, recipient.sent_at
         )
     except GmailError as e:
         settle(f"Could not check for a reply, will try again: {e}", retry_in=timedelta(minutes=15))
@@ -448,7 +448,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         in_reply_to=recipient.rfc_id or None,
     )
     try:
-        await js.gmail.send(refresh, message, thread_id=recipient.gmail_thread_id)
+        await mailbox.send(message, thread_id=recipient.gmail_thread_id)
     except GmailError as e:
         text = str(e)
         code = e.status_code
@@ -458,10 +458,10 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         elif code == 401 or (code == 400 and ("revoked" in text or "expired" in text)):
             settle()
             running = list(await session.scalars(select(Campaign.id).where(Campaign.status == CampaignStatus.RUNNING)))
-            await _pause(session, running, "Gmail access was revoked. Connect Gmail again, then resume.", js.notify)
+            await _pause(session, running, _revoked_reason(account, text), js.notify)
         elif code == 429 or (code == 403 and any(w in text.lower() for w in ("rate", "quota", "limit"))):
             settle()
-            await _pause(session, [campaign.id], f"Gmail is limiting this account. {text}", js.notify)
+            await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
         elif code is None or code >= 500:
             recipient.followup_errors += 1
             if recipient.followup_errors >= MAX_ATTEMPTS:
@@ -585,9 +585,9 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
         attachment=attachment,
     )
     try:
-        result = await js.gmail.send(gmail_lib.decrypt(account.refresh_token, get_env().secret_key), message)
+        result = await open_mailbox(js, account).send(message)
     except GmailError as e:
-        await _handle_send_error(js, session, campaign, recipient, e, now)
+        await _handle_send_error(js, session, campaign, recipient, e, now, account)
         await session.commit()
         return False
 
@@ -601,7 +601,19 @@ async def _deliver(js, session: AsyncSession, campaign: Campaign, recipient: Rec
     return True
 
 
-async def _handle_send_error(js, session: AsyncSession, campaign: Campaign, recipient: Recipient, e: GmailError, now: datetime) -> None:
+def _limited_reason(account: GmailAccount, text: str) -> str:
+    return f"{account.email} is being limited by its mail server. {text}" if account.kind == "smtp" else f"Gmail is limiting this account. {text}"
+
+
+def _revoked_reason(account: GmailAccount, text: str) -> str:
+    if account.kind == "smtp":
+        return f"{text} Fix the mailbox in Email settings, then resume."
+    return "Gmail access was revoked. Connect Gmail again, then resume."
+
+
+async def _handle_send_error(
+    js, session: AsyncSession, campaign: Campaign, recipient: Recipient, e: GmailError, now: datetime, account: GmailAccount
+) -> None:
     text = str(e)
     code = e.status_code
     store.log_event(session, "outreach_send_failed", f"{recipient.email}: {text}", "error")
@@ -612,11 +624,11 @@ async def _handle_send_error(js, session: AsyncSession, campaign: Campaign, reci
     if code == 401 or (code == 400 and ("revoked" in text or "expired" in text)):
         recipient.status, recipient.attempts = RecipientStatus.PENDING, recipient.attempts - 1
         running = list(await session.scalars(select(Campaign.id).where(Campaign.status == CampaignStatus.RUNNING)))
-        await _pause(session, running, "Gmail access was revoked. Connect Gmail again, then resume.", js.notify)
+        await _pause(session, running, _revoked_reason(account, text), js.notify)
         return
     if code == 429 or (code == 403 and any(w in text.lower() for w in ("rate", "quota", "limit"))):
         recipient.status, recipient.attempts, recipient.error = RecipientStatus.PENDING, recipient.attempts - 1, text
-        await _pause(session, [campaign.id], f"Gmail is limiting this account. {text}", js.notify)
+        await _pause(session, [campaign.id], _limited_reason(account, text), js.notify)
         return
     if (code is None or code >= 500) and recipient.attempts < MAX_ATTEMPTS:
         recipient.status, recipient.error = RecipientStatus.PENDING, text
@@ -740,24 +752,21 @@ async def check_replies(js, now: datetime) -> None:
             if account is None:
                 continue  # its Gmail was disconnected, there is nothing left to read
             try:
-                refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
-            except GmailError:
-                continue
-            try:
-                messages = await js.gmail.thread(refresh, recipient.gmail_thread_id)
+                mailbox = open_mailbox(js, account)
+                messages = await mailbox.thread(recipient.gmail_thread_id)
             except GmailError as e:
                 logger.warning("Could not read thread %s: %s", recipient.gmail_thread_id, e)
                 continue
             outcome = classify_thread(messages, account.email, recipient.gmail_message_id)
             if outcome is None:
                 try:
-                    if await js.gmail.answered_by(refresh, recipient.email, recipient.sent_at):
+                    if await mailbox.answered_by(recipient.email, recipient.sent_at):
                         outcome = RecipientStatus.REPLIED
                 except GmailError as e:
                     logger.warning("Could not look for answers from %s: %s", recipient.email, e)
                     continue
             if outcome == RecipientStatus.BOUNCED:
-                recipient.status, recipient.error = RecipientStatus.BOUNCED, "Gmail could not deliver this email"
+                recipient.status, recipient.error = RecipientStatus.BOUNCED, "The email could not be delivered"
                 if not await is_suppressed(session, recipient.email):
                     session.add(Suppression(email=recipient.email, reason="Bounced"))
                 touched.add(recipient.campaign_id)

@@ -1,6 +1,8 @@
 """HTTP API of the Jobs service, under /api/jobs."""
 
+import asyncio
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import Literal
 from urllib.parse import quote
@@ -17,6 +19,7 @@ from app.jobs import extract as extraction
 from app.jobs import gmail as gmail_lib
 from app.jobs import schemas
 from app.jobs.gmail import Attachment, GmailClient, GmailError
+from app.jobs.mailbox import SmtpDriver, SmtpMailbox, SmtpSettings, open_mailbox
 from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobProfileItem, JobPrompt, JobResume
 from app.jobs.writer import DEFAULT_PROMPT, email_problem, write_email
 from app.models import utcnow
@@ -44,6 +47,7 @@ class JobServices:
     sessions: async_sessionmaker[AsyncSession]
     llm: LLM
     gmail: GmailClient
+    smtp: SmtpDriver = dataclass_field(default_factory=SmtpDriver)
     lookup: extraction.MailServerLookup = extraction.has_mail_server
     notifier: Notifier | None = None
 
@@ -228,6 +232,44 @@ async def gmail_update(account_id: int, body: schemas.GmailAccountPatch, session
     return account
 
 
+@router.post("/gmail/smtp", response_model=schemas.GmailAccountOut)
+async def smtp_connect(body: schemas.SmtpAccountIn, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
+    """Add (or renew) a mailbox that sends over SMTP. The login is tried first, on both SMTP and IMAP."""
+    user = (body.smtp_user.strip() or str(body.email)).lower()
+    settings = SmtpSettings(
+        host=body.smtp_host,
+        port=body.smtp_port,
+        secure=body.smtp_secure,
+        user=user,
+        password=body.smtp_password,
+        imap_host=body.imap_host,
+        imap_port=body.imap_port,
+    )
+    try:
+        await asyncio.to_thread(SmtpMailbox(js.smtp, settings).check)
+    except GmailError as e:
+        raise HTTPException(422, str(e)) from e
+
+    email = str(body.email).lower()
+    secret = gmail_lib.encrypt(body.smtp_password, get_env().secret_key)
+    account = await session.scalar(select(GmailAccount).where(GmailAccount.email == email))
+    if account and account.kind != "smtp":
+        raise HTTPException(409, f"{email} is already connected through Gmail. Disconnect it first to use SMTP instead.")
+    if account is None:
+        account = GmailAccount(email=email, is_default=not await accounts.any_connected(session))
+        session.add(account)
+    account.kind = "smtp"
+    account.smtp_host, account.smtp_port, account.smtp_secure = body.smtp_host, body.smtp_port, body.smtp_secure
+    account.smtp_user, account.smtp_password = user, secret
+    account.imap_host, account.imap_port = body.imap_host, body.imap_port
+    account.sender_name = body.sender_name.strip() or account.sender_name
+    account.signature = body.signature.strip() or account.signature
+    account.connected_at = utcnow()
+    _log(session, "gmail", f"Mailbox connected over SMTP: {email}")
+    await session.commit()
+    return account
+
+
 @router.post("/gmail/{account_id}/default", response_model=schemas.GmailAccountOut)
 async def gmail_make_default(account_id: int, session: AsyncSession = Depends(get_session)):
     account = await _account(session, account_id)
@@ -241,10 +283,11 @@ async def gmail_make_default(account_id: int, session: AsyncSession = Depends(ge
 async def gmail_disconnect(account_id: int, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
     """Remove one Gmail. What it already sent stays in the history; its follow-ups and reply checks stop with it."""
     account = await _account(session, account_id)
-    try:
-        await js.gmail.revoke(gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
-    except GmailError:
-        pass
+    if account.kind == "gmail":
+        try:
+            await js.gmail.revoke(gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
+        except GmailError:
+            pass
     was_default, address = account.is_default, account.email
     # Campaigns that were set to send from it would otherwise carry on from the default account without anyone noticing.
     await session.execute(
@@ -433,7 +476,6 @@ async def send_application(
     session: AsyncSession = Depends(get_session),
     js: JobServices = Depends(job_services),
 ):
-    env = get_env()
     s = await get_settings(session)
     application = await _application(session, application_id)
     _editable(application)
@@ -498,7 +540,7 @@ async def send_application(
         attachment=attachment,
     )
     try:
-        result = await js.gmail.send(gmail_lib.decrypt(account.refresh_token, env.secret_key), message)
+        result = await open_mailbox(js, account).send(message)
     except GmailError as e:
         application.status, application.error = ApplicationStatus.FAILED, str(e)
         _log(session, "send_failed", f"{application.to_email}: {e}", "error")

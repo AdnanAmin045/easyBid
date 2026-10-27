@@ -11,9 +11,9 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_, select, update
 
-from app.config import get_env
 from app.jobs import accounts
 from app.jobs import gmail as gmail_lib
+from app.jobs.mailbox import open_mailbox
 from app.jobs.gmail import GmailError
 from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobResume
 from app.jobs.schemas import JobSettings
@@ -146,11 +146,10 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         await session.commit()
         return False
     try:
-        refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
+        mailbox = open_mailbox(js, account)
         # Never follow up blind: look at the conversation, and at anything else they have written, first.
         outcome = await engine.thread_outcome(
-            js,
-            refresh,
+            mailbox,
             account.email,
             application.gmail_thread_id,
             application.gmail_message_id,
@@ -189,7 +188,7 @@ async def _deliver(js, session, application: JobApplication, step: int, account:
         in_reply_to=application.rfc_id or None,
     )
     try:
-        await js.gmail.send(refresh, message, thread_id=application.gmail_thread_id)
+        await mailbox.send(message, thread_id=application.gmail_thread_id)
     except GmailError as e:
         text, code = str(e), e.status_code
         store.log_event(session, "jobs_followup_failed", f"{application.to_email} (follow-up {step + 1}): {text}", "error")
@@ -256,15 +255,15 @@ async def check_replies(js, now: datetime) -> None:
             if account is None:
                 continue  # its Gmail was disconnected, there is nothing left to read
             try:
-                refresh = gmail_lib.decrypt(account.refresh_token, get_env().secret_key)
-                messages = await js.gmail.thread(refresh, application.gmail_thread_id)
+                mailbox = open_mailbox(js, account)
+                messages = await mailbox.thread(application.gmail_thread_id)
             except GmailError as e:
                 logger.warning("Could not read thread %s: %s", application.gmail_thread_id, e)
                 continue
             outcome = engine.classify_thread(messages, account.email, application.gmail_message_id)
             if outcome is None:
                 try:
-                    if await js.gmail.answered_by(refresh, application.to_email, application.sent_at):
+                    if await mailbox.answered_by(application.to_email, application.sent_at):
                         outcome = RecipientStatus.REPLIED
                 except GmailError as e:
                     logger.warning("Could not look for answers from %s: %s", application.to_email, e)
