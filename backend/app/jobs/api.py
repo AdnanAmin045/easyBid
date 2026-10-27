@@ -12,15 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_env
 from app.db import get_session
+from app.jobs import accounts
 from app.jobs import extract as extraction
 from app.jobs import gmail as gmail_lib
 from app.jobs import schemas
 from app.jobs.gmail import Attachment, GmailClient, GmailError
-from app.jobs.models import ApplicationStatus, JobApplication, JobProfileItem, JobPrompt, JobResume
+from app.jobs.models import ApplicationStatus, GmailAccount, JobApplication, JobProfileItem, JobPrompt, JobResume
 from app.jobs.writer import DEFAULT_PROMPT, email_problem, write_email
 from app.models import utcnow
 from app.outreach import engine as outreach_engine
-from app.outreach.models import Recipient
+from app.outreach.models import Campaign, CampaignStatus, Recipient
 from app.pagination import Page, PageParams, contains, paginate
 from app.security import require_user
 from app.services import store
@@ -28,7 +29,6 @@ from app.services.notifier import Notifier
 from app.services.llm import LLM, LLMError
 
 SETTINGS_KEY = "jobs_settings"
-GMAIL_KEY = "jobs_gmail"
 MAX_RESUME_BYTES = 5 * 1024 * 1024
 RESUME_TYPES = {
     "application/pdf": ".pdf",
@@ -68,9 +68,11 @@ async def active_profile(session: AsyncSession) -> list[JobProfileItem]:
     return list(await session.scalars(select(JobProfileItem).where(JobProfileItem.is_active).order_by(JobProfileItem.id)))
 
 
-async def sent_today(session: AsyncSession) -> int:
+async def sent_today(session: AsyncSession, account_id: int | None = None) -> int:
     midnight = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     query = select(func.count()).where(JobApplication.status == ApplicationStatus.SENT, JobApplication.sent_at >= midnight)
+    if account_id is not None:
+        query = query.where(JobApplication.gmail_account_id == account_id)
     return await session.scalar(query) or 0
 
 
@@ -117,11 +119,11 @@ def _log(session: AsyncSession, event: str, message: str, level: str = "info") -
 @router.get("/overview")
 async def overview(session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)) -> dict:
     s = await get_settings(session)
-    account = await store.get_config(session, GMAIL_KEY)
+    account = await accounts.default_account(session)
     counts = dict((await session.execute(select(JobApplication.status, func.count()).group_by(JobApplication.status))).all())
     recent = await session.scalars(select(JobApplication).order_by(JobApplication.created_at.desc()).limit(5))
     return {
-        "gmail": {"configured": js.gmail.configured, "connected": bool(account), "email": account.get("email")},
+        "gmail": {"configured": js.gmail.configured, "connected": account is not None, "email": account.email if account else None},
         "ai_problem": js.llm.model_problem(s.model),
         "prompt_active": await active_prompt(session) is not None,
         "profile_items": await session.scalar(select(func.count()).select_from(JobProfileItem)) or 0,
@@ -154,12 +156,14 @@ async def write_settings(body: schemas.JobSettings, session: AsyncSession = Depe
 
 @router.get("/gmail", response_model=schemas.GmailStatus)
 async def gmail_status(session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
-    account = await store.get_config(session, GMAIL_KEY)
+    listed = list(await session.scalars(select(GmailAccount).order_by(GmailAccount.is_default.desc(), GmailAccount.id)))
+    default = listed[0] if listed else None
     return schemas.GmailStatus(
         configured=js.gmail.configured,
-        connected=bool(account),
-        email=account.get("email"),
-        connected_at=account.get("connected_at"),
+        connected=bool(listed),
+        email=default.email if default else None,
+        connected_at=default.connected_at if default else None,
+        accounts=[schemas.GmailAccountOut.model_validate(a) for a in listed],
     )
 
 
@@ -195,29 +199,71 @@ async def gmail_callback(
     except GmailError as e:
         return back("error", str(e))
 
-    account = {
-        "email": email,
-        "refresh_token": gmail_lib.encrypt(tokens["refresh_token"], env.secret_key),
-        "connected_at": utcnow().isoformat(),
-        "scopes": tokens.get("scope", ""),
-    }
-    await store.set_config(session, GMAIL_KEY, account)
+    email = email.lower()
+    token = gmail_lib.encrypt(tokens["refresh_token"], env.secret_key)
+    account = await session.scalar(select(GmailAccount).where(GmailAccount.email == email))
+    if account:  # connecting the same address again just renews its access
+        account.refresh_token, account.scopes, account.connected_at = token, tokens.get("scope", ""), utcnow()
+    else:
+        first = not await accounts.any_connected(session)
+        session.add(GmailAccount(email=email, refresh_token=token, scopes=tokens.get("scope", ""), is_default=first))
     _log(session, "gmail", f"Gmail connected: {email}")
     await session.commit()
     return back("connected")
 
 
-@router.post("/gmail/disconnect", status_code=204)
-async def gmail_disconnect(session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
-    account = await store.get_config(session, GMAIL_KEY)
-    if account:
-        try:
-            await js.gmail.revoke(gmail_lib.decrypt(account["refresh_token"], get_env().secret_key))
-        except GmailError:
-            pass
-        await store.set_config(session, GMAIL_KEY, {})
-        _log(session, "gmail", f"Gmail disconnected: {account.get('email')}")
-        await session.commit()
+async def _account(session: AsyncSession, account_id: int) -> GmailAccount:
+    account = await session.get(GmailAccount, account_id)
+    if account is None:
+        raise HTTPException(404, "Gmail account not found")
+    return account
+
+
+@router.patch("/gmail/{account_id}", response_model=schemas.GmailAccountOut)
+async def gmail_update(account_id: int, body: schemas.GmailAccountPatch, session: AsyncSession = Depends(get_session)):
+    account = await _account(session, account_id)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(account, field, (value or "").strip())
+    await session.commit()
+    return account
+
+
+@router.post("/gmail/{account_id}/default", response_model=schemas.GmailAccountOut)
+async def gmail_make_default(account_id: int, session: AsyncSession = Depends(get_session)):
+    account = await _account(session, account_id)
+    await session.execute(update(GmailAccount).values(is_default=False))
+    account.is_default = True
+    await session.commit()
+    return account
+
+
+@router.post("/gmail/{account_id}/disconnect", status_code=204)
+async def gmail_disconnect(account_id: int, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
+    """Remove one Gmail. What it already sent stays in the history; its follow-ups and reply checks stop with it."""
+    account = await _account(session, account_id)
+    try:
+        await js.gmail.revoke(gmail_lib.decrypt(account.refresh_token, get_env().secret_key))
+    except GmailError:
+        pass
+    was_default, address = account.is_default, account.email
+    # Campaigns that were set to send from it would otherwise carry on from the default account without anyone noticing.
+    await session.execute(
+        update(Campaign)
+        .where(Campaign.gmail_account_id == account.id, Campaign.status == CampaignStatus.RUNNING)
+        .values(
+            status=CampaignStatus.PAUSED,
+            pause_reason=f"{address} was disconnected. Choose a Gmail for this campaign, then start it again.",
+            next_send_at=None,
+        )
+    )
+    await session.delete(account)
+    await session.flush()
+    if was_default:  # another account takes over as the default
+        replacement = await accounts.default_account(session)
+        if replacement:
+            replacement.is_default = True
+    _log(session, "gmail", f"Gmail disconnected: {address}")
+    await session.commit()
 
 
 # --- extraction -----------------------------------------------------------------
@@ -392,10 +438,10 @@ async def send_application(
     application = await _application(session, application_id)
     _editable(application)
 
-    account = await store.get_config(session, GMAIL_KEY)
-    if not account:
+    account = await accounts.resolve(session, body.gmail_account_id)
+    if account is None:
         raise HTTPException(409, "Connect Gmail in Email settings first")
-    if await sent_today(session) >= s.daily_send_limit:
+    if await sent_today(session, account.id) >= s.daily_send_limit:
         raise HTTPException(409, f"Daily send limit reached ({s.daily_send_limit}). It resets at 00:00 UTC.")
     problem = email_problem(application.subject, application.body, s)
     if problem:
@@ -430,7 +476,7 @@ async def send_application(
             JobApplication.id == application_id,
             JobApplication.status.in_([ApplicationStatus.DRAFT, ApplicationStatus.FAILED]),
         )
-        .values(status=ApplicationStatus.SENDING, error=None)
+        .values(status=ApplicationStatus.SENDING, error=None, gmail_account_id=account.id)
     )
     await session.commit()
     if claimed.rowcount != 1:
@@ -443,8 +489,8 @@ async def send_application(
         resume = application.resume
         attachment = Attachment(resume.filename, resume.content_type, data)
     message = gmail_lib.build_message(
-        sender_email=account["email"],
-        sender_name=s.sender_name,
+        sender_email=account.email,
+        sender_name=accounts.identity(s, account).sender_name,
         to=application.to_email,
         cc=application.cc,
         subject=application.subject,
@@ -452,7 +498,7 @@ async def send_application(
         attachment=attachment,
     )
     try:
-        result = await js.gmail.send(gmail_lib.decrypt(account["refresh_token"], env.secret_key), message)
+        result = await js.gmail.send(gmail_lib.decrypt(account.refresh_token, env.secret_key), message)
     except GmailError as e:
         application.status, application.error = ApplicationStatus.FAILED, str(e)
         _log(session, "send_failed", f"{application.to_email}: {e}", "error")

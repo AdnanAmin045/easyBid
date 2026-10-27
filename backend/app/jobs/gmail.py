@@ -122,8 +122,9 @@ class GmailClient:
             "response_type": "code",
             "scope": " ".join(SCOPES),
             # offline + consent: Google returns a refresh token every time, so reconnecting always works.
+            # select_account: always ask which Google account, so a second address can be connected.
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": "select_account consent",
             "include_granted_scopes": "true",
             "state": state,
         }

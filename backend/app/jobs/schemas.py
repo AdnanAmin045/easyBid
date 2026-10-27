@@ -94,6 +94,8 @@ class FollowUpsIn(BaseModel):
 
 
 class SendIn(BaseModel):
+    # The Gmail to send from; the default account when empty.
+    gmail_account_id: int | None = None
     # Required to write again to an address or company applied to recently.
     allow_duplicate: bool = False
 
@@ -135,6 +137,7 @@ class ApplicationOut(ApplicationBrief):
     resume: ResumeOut | None
     prompt_id: int | None
     model: str
+    gmail_account_id: int | None = None
     gmail_thread_id: str | None
     followups: list[FollowUp] = []
     followups_sent: int = 0
@@ -172,8 +175,27 @@ class PromptOut(BaseModel):
     created_at: datetime
 
 
+class GmailAccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    is_default: bool
+    sender_name: str
+    signature: str
+    connected_at: datetime
+
+
+class GmailAccountPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sender_name: str | None = Field(None, max_length=120)
+    signature: str | None = Field(None, max_length=1000)
+
+
 class GmailStatus(BaseModel):
     configured: bool  # the OAuth app is set up on the server
-    connected: bool
-    email: str | None = None
+    connected: bool  # at least one account
+    email: str | None = None  # the default account
     connected_at: datetime | None = None
+    accounts: list[GmailAccountOut] = []
