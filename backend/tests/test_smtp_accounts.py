@@ -248,3 +248,14 @@ async def test_an_application_goes_out_over_smtp_and_is_followed_up_there(jobs, 
 
     assert await job_followups.tick(js, now=utcnow() + timedelta(days=6)) == 1
     assert world.sent[1]["In-Reply-To"] == world.sent[0]["Message-ID"] and not google.sent
+
+
+def test_a_failed_connection_says_what_happened_with_each_address():
+    import pytest
+
+    from app.jobs.mailbox import connect
+
+    with pytest.raises(OSError) as raised:
+        connect("localhost", 1, 3)  # resolves to IPv6 and IPv4, nothing listens on either
+    text = str(raised.value)
+    assert "IPv4 127.0.0.1" in text and text.index("IPv4") < (text.index("IPv6") if "IPv6" in text else len(text))
