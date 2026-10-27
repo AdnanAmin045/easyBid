@@ -8,7 +8,7 @@ from app.jobs import followups as job_followups
 from app.jobs.models import GmailAccount
 from app.models import utcnow
 from app.outreach import engine
-from app.outreach.models import Campaign, Recipient
+from app.outreach.models import Campaign, Recipient, Suppression
 from tests.test_followups import DAY, PLAN, thread_with  # noqa: F401
 from tests.test_job_followups import PLAN as JOB_PLAN
 from tests.test_job_followups import sent_application
@@ -244,3 +244,39 @@ async def test_an_unused_smtp_mailbox_for_the_same_address_is_turned_into_the_al
     async with js.sessions() as session:
         stored = await session.get(GmailAccount, smtp["id"])
     assert stored.smtp_password == "" and stored.smtp_host == ""
+
+
+async def test_gmail_failing_to_send_as_an_address_is_not_taken_for_a_bounce(outreach, google):
+    client, js = outreach
+    await connect_gmail(client)
+    gmail = (await client.get("/api/jobs/gmail")).json()["accounts"][0]
+    google.send_as = [(ALIAS, "accepted")]
+    alias = (await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})).json()
+    campaign = await make_campaign(client, gmail_account_id=alias["id"], followups=PLAN[:1])
+    await import_text(client, campaign["id"], "ann@acmelabs.io\nbob@globex.io")
+    await start(client, campaign["id"])
+    assert await engine.tick(js, now=at(1)) == 1
+
+    # Gmail's own notice that the Send mail as settings are wrong, sent by the same "Mail Delivery Subsystem" as real bounces.
+    notice = {
+        "id": "n1",
+        "snippet": "Message not delivered You're sending this from a different address or alias using the 'Send mail as' feature.",
+        "payload": {"headers": [{"name": "From", "value": "Mail Delivery Subsystem <mailer-daemon@googlemail.com>"}]},
+    }
+    google.threads["t1"] = [{"id": "m1", "payload": {"headers": [{"name": "From", "value": ALIAS}]}}, notice]
+    await engine.tick(js, now=at(3 * 60))  # a minute-scale re-check of what was just sent, not a quarter of an hour
+    rows = {r["email"]: r for r in await recipients(client, campaign["id"])}
+    assert rows["ann@acmelabs.io"]["status"] == "failed" and "Send mail as" in rows["ann@acmelabs.io"]["error"]
+    async with js.sessions() as session:
+        assert (await session.scalars(select(Suppression))).all() == []  # not blacklisted: they did nothing wrong
+    state = (await client.get(f"/api/outreach/campaigns/{campaign['id']}")).json()
+    assert state["status"] == "paused" and "Send mail as" in state["pause_reason"]
+    assert len(google.sent) <= 2  # at most one more went out before the notice was seen
+
+    # An ordinary bounce is still a bounce.
+    google.threads["t1"] = [{"id": "m1", "payload": {"headers": [{"name": "From", "value": ALIAS}]}}, {**notice, "snippet": "550 5.1.1 user unknown"}]
+    async with js.sessions() as session:
+        await session.execute(update(Recipient).where(Recipient.email == "ann@acmelabs.io").values(status="sent", error=None, checked_at=None))
+        await session.commit()
+    await engine.tick(js, now=at(60 * 60))
+    assert {r["email"]: r["status"] for r in await recipients(client, campaign["id"])}["ann@acmelabs.io"] == "bounced"
