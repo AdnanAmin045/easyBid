@@ -49,7 +49,7 @@ function SendFrom({ value, onChange }: { value: number | null; onChange: (value:
     <Card title="Send from">
       <div className="max-w-md">
         <Field
-          label="Gmail account"
+          label="Sending account"
           hint="Its limits, name and signature apply, and its follow-ups and replies stay on it. Add more accounts in Email settings."
         >
           <Select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>

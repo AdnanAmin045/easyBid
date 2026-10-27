@@ -410,6 +410,8 @@ export interface JobSettings {
 export interface GmailAccount {
   id: number;
   email: string;
+  kind: "gmail" | "smtp";
+  smtp_host: string;
   is_default: boolean;
   sender_name: string;
   signature: string;

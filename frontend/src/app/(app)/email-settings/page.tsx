@@ -120,6 +120,7 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
         <div className="flex items-center gap-2 text-sm">
           <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
           <span className="font-medium text-stone-900">{account.email}</span>
+          {account.kind === "smtp" && <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">SMTP · {account.smtp_host}</span>}
           {account.is_default && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">Default</span>}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -134,7 +135,7 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
             loading={busy === "disconnect" + mine}
             disabled={Boolean(busy)}
             onClick={() => {
-              if (!confirm(`Disconnect ${account.email}? Campaigns running from it are paused, and follow-ups of emails it sent stop.`)) return;
+              if (!confirm(`Remove ${account.email}? Campaigns running from it are paused, and follow-ups of emails it sent stop.`)) return;
               void act("disconnect", () => api(`/jobs/gmail/${account.id}/disconnect`, { method: "POST" }));
             }}
           >
@@ -166,11 +167,105 @@ function AccountRow({ account, onChanged, busy, setBusy, setError }: {
   );
 }
 
+function SmtpForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
+  const blank = {
+    email: "",
+    smtp_host: "",
+    smtp_port: 465,
+    smtp_secure: true,
+    smtp_user: "",
+    smtp_password: "",
+    imap_host: "",
+    imap_port: 993,
+    sender_name: "",
+    signature: "",
+  };
+  const [f, setF] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (patch: Partial<typeof blank>) => setF((current) => ({ ...current, ...patch }));
+
+  function preset(provider: "hostinger" | "other") {
+    set(provider === "hostinger" ? { smtp_host: "smtp.hostinger.com", smtp_port: 465, smtp_secure: true, imap_host: "imap.hostinger.com", imap_port: 993 } : {});
+  }
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/jobs/gmail/smtp", { method: "POST", body: f });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="mb-3 rounded-[10px] border border-stone-200 bg-stone-50 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-stone-900">Add a mailbox over SMTP</h3>
+        <Button className="text-xs" onClick={() => preset("hostinger")}>
+          Fill in Hostinger
+        </Button>
+      </div>
+      <Notice>{error}</Notice>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Email address" hint="The address emails are sent from, e.g. adnan@codevryn.com">
+          <Input type="email" value={f.email} onChange={(e) => set({ email: e.target.value })} />
+        </Field>
+        <Field label="Mailbox password" hint="Saved encrypted. Used to log in and never shown again.">
+          <Input type="password" autoComplete="new-password" value={f.smtp_password} onChange={(e) => set({ smtp_password: e.target.value })} />
+        </Field>
+        <Field label="SMTP server" hint="Sends the email, e.g. smtp.hostinger.com">
+          <Input value={f.smtp_host} onChange={(e) => set({ smtp_host: e.target.value })} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="SMTP port" hint="465 (TLS) or 587">
+            <Input type="number" value={String(f.smtp_port)} onChange={(e) => set({ smtp_port: Number(e.target.value) })} />
+          </Field>
+          <Field label="Connection">
+            <Select value={f.smtp_secure ? "tls" : "starttls"} onChange={(e) => set({ smtp_secure: e.target.value === "tls" })}>
+              <option value="tls">TLS (port 465)</option>
+              <option value="starttls">STARTTLS (port 587)</option>
+            </Select>
+          </Field>
+        </div>
+        <Field label="IMAP server" hint="Reads replies and bounces, e.g. imap.hostinger.com">
+          <Input value={f.imap_host} onChange={(e) => set({ imap_host: e.target.value })} />
+        </Field>
+        <Field label="IMAP port" hint="Usually 993">
+          <Input type="number" value={String(f.imap_port)} onChange={(e) => set({ imap_port: Number(e.target.value) })} />
+        </Field>
+        <Field label="Login name" hint="Leave empty to use the email address.">
+          <Input value={f.smtp_user} onChange={(e) => set({ smtp_user: e.target.value })} />
+        </Field>
+        <Field label="Sender name" hint="Optional. Empty uses the name in Jobs applications below.">
+          <Input value={f.sender_name} maxLength={120} onChange={(e) => set({ sender_name: e.target.value })} />
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Signature" hint="Optional. Empty uses the shared signature.">
+            <Textarea rows={3} value={f.signature} maxLength={1000} onChange={(e) => set({ signature: e.target.value })} />
+          </Field>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-stone-500">The login is tried on both servers before anything is saved. Without IMAP, replies cannot be seen, so follow-ups would not know who answered.</p>
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" loading={busy} disabled={!f.email || !f.smtp_host || !f.imap_host || !f.smtp_password} onClick={save}>
+          {busy ? "Checking the login…" : "Check and save"}
+        </Button>
+        <Button onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 function Gmail() {
   const params = useSearchParams();
   const { data, error, loading, reload } = useApi<GmailStatus>("/jobs/gmail");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
+  const [adding, setAdding] = useState(false);
   const result = params.get("gmail");
 
   async function connect() {
@@ -186,7 +281,7 @@ function Gmail() {
   }
 
   return (
-    <Card title="Gmail accounts">
+    <Card title="Sending accounts">
       {result === "connected" && <Notice tone="green">Gmail connected.</Notice>}
       {result === "error" && <Notice>Gmail was not connected: {params.get("message") || "unknown error"}</Notice>}
       <Notice>{error || actionError}</Notice>
@@ -195,9 +290,9 @@ function Gmail() {
       ) : (
         <>
           <p className="mb-3 text-sm text-stone-600">
-            Emails are sent through the Gmail API from your own accounts. Connect as many as you like, then choose which one each campaign or
-            application sends from. Follow-ups and reply checks always use the account the first email went from. Worklane asks for permission to
-            send email and to read the threads it starts, so it can see replies. Your password is never seen or stored.
+            Connect as many sending accounts as you like, then choose which one each campaign or application sends from. A Gmail account is
+            connected through Google (Worklane never sees its password). Any other mailbox, such as a Hostinger address, is added over SMTP and
+            IMAP. Follow-ups and reply checks always use the account the first email went from.
           </p>
           {data.accounts.length > 0 && (
             <ul className="mb-3 space-y-2">
@@ -206,14 +301,20 @@ function Gmail() {
               ))}
             </ul>
           )}
+          {adding && <SmtpForm onSaved={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} />}
           {!data.configured && (
             <Notice tone="amber">
               The server has no Google OAuth client yet. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI on the backend first.
             </Notice>
           )}
-          <Button variant="dark" loading={busy === "connect"} disabled={Boolean(busy) || !data.configured} onClick={connect}>
-            {busy === "connect" ? "Opening Google…" : data.accounts.length ? "Connect another Gmail" : "Connect Gmail"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="dark" loading={busy === "connect"} disabled={Boolean(busy) || !data.configured} onClick={connect}>
+              {busy === "connect" ? "Opening Google…" : data.accounts.length ? "Connect another Gmail" : "Connect Gmail"}
+            </Button>
+            <Button disabled={adding} onClick={() => setAdding(true)}>
+              Add other mailbox (SMTP)
+            </Button>
+          </div>
           {data.accounts.length > 0 && (
             <p className="mt-2 text-xs text-stone-500">Google shows its account chooser, so pick the other address there.</p>
           )}
