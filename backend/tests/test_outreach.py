@@ -697,6 +697,20 @@ async def test_export_neutralises_spreadsheet_formulas(outreach):
     assert rows[1][0] == "ann@acmelabs.io" and rows[1][1].startswith("'=")
 
 
+async def test_export_has_sheet_columns_and_contacted_list(outreach):
+    client, _ = outreach
+    campaign = await make_campaign(client)
+    await import_text(client, campaign["id"], "email,name,city\nann@acmelabs.io,Ann,Lahore\nbob@acmelabs.io,Bob,Paris\n")
+    rows = list(csv.reader(io.StringIO((await client.get(f"/api/outreach/campaigns/{campaign['id']}/export")).text)))
+    assert rows[0][-1] == "city" and rows[1][-1] == "Lahore"
+
+    await client.post("/api/outreach/suppressions", json={"emails": "gone@acmelabs.io", "reason": "asked"})
+    unsent = list(csv.reader(io.StringIO((await client.get("/api/outreach/contacted/export")).text)))
+    assert [r[0] for r in unsent[1:]] == ["gone@acmelabs.io"] and unsent[1][3] == "do-not-contact"
+    everyone = list(csv.reader(io.StringIO((await client.get("/api/outreach/contacted/export", params={"include_unsent": True})).text)))
+    assert {r[0] for r in everyone[1:]} == {"ann@acmelabs.io", "bob@acmelabs.io", "gone@acmelabs.io"}
+
+
 async def test_import_limits(outreach):
     client, _ = outreach
     campaign = await make_campaign(client)

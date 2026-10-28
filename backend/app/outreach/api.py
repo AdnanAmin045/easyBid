@@ -791,21 +791,68 @@ def _cell(value) -> str:
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
+def _csv_response(text: str, name: str) -> Response:
+    safe = "".join(c if c.isalnum() else "-" for c in name)[:60] or "export"
+    return Response(
+        text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.csv"'},
+    )
+
+
+def _iso(value) -> str:
+    return value.isoformat() if value else ""
+
+
 @router.get("/campaigns/{campaign_id}/export")
 async def export_campaign(campaign_id: int, session: AsyncSession = Depends(get_session)):
+    """Every recipient with its outcome, plus the extra columns of the imported sheet (company, city, ...)."""
     campaign = await _campaign(session, campaign_id)
+    extra = await _columns(session, campaign_id)
     out = io.StringIO()
     writer_ = csv.writer(out)
-    writer_.writerow(["email", "name", "company", "status", "sent_at", "follow_ups_sent", "subject", "error"])
+    writer_.writerow(["email", "name", "company", "status", "sent_at", "last_contact_at", "follow_ups_sent", "subject", "error", *extra])
     rows = await session.stream_scalars(select(Recipient).where(Recipient.campaign_id == campaign_id).order_by(Recipient.position, Recipient.id))
     async for r in rows:
-        writer_.writerow([_cell(v) for v in (r.email, r.name, r.company, r.status, r.sent_at.isoformat() if r.sent_at else "", r.followups_sent, r.subject, r.error)])
-    name = "".join(c if c.isalnum() else "-" for c in campaign.name)[:60] or "campaign"
-    return Response(
-        out.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{name}.csv"'},
-    )
+        values = (r.email, r.name, r.company, r.status, _iso(r.sent_at), _iso(r.last_contact_at), r.followups_sent, r.sent_subject or r.subject, r.error)
+        writer_.writerow([_cell(v) for v in (*values, *(r.fields.get(k, "") for k in extra))])
+    return _csv_response(out.getvalue(), campaign.name)
+
+
+@router.get("/contacted/export")
+async def export_contacted(
+    include_unsent: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
+    """One row per address across all campaigns, so a new lead sheet can be checked against it before importing.
+
+    By default only addresses an email actually left for are listed; include_unsent adds the ones still waiting
+    or held back. Addresses on the do-not-contact list are always added.
+    """
+    query = select(Recipient, Campaign.name).join(Campaign, Campaign.id == Recipient.campaign_id)
+    if not include_unsent:
+        query = query.where(Recipient.status.in_(RecipientStatus.DELIVERED))
+    # Latest contact first, so the first row seen for an address is the freshest one.
+    query = query.order_by(Recipient.last_contact_at.desc().nulls_last(), Recipient.id.desc())
+
+    seen: dict[str, dict] = {}
+    for recipient, campaign_name in (await session.execute(query)).all():
+        row = seen.get(recipient.email)
+        if row is None:
+            seen[recipient.email] = {"recipient": recipient, "campaigns": [campaign_name]}
+        elif campaign_name not in row["campaigns"]:
+            row["campaigns"].append(campaign_name)
+
+    out = io.StringIO()
+    writer_ = csv.writer(out)
+    writer_.writerow(["email", "name", "company", "status", "first_sent_at", "last_contact_at", "follow_ups_sent", "campaigns", "note"])
+    for email, row in seen.items():
+        r = row["recipient"]
+        writer_.writerow([_cell(v) for v in (email, r.name, r.company, r.status, _iso(r.sent_at), _iso(r.last_contact_at), r.followups_sent, "; ".join(row["campaigns"]), r.error)])
+    for sup in await session.scalars(select(Suppression).order_by(Suppression.email)):
+        if sup.email not in seen:
+            writer_.writerow([_cell(v) for v in (sup.email, "", "", "do-not-contact", "", _iso(sup.created_at), "", "", sup.reason)])
+    return _csv_response(out.getvalue(), "contacted-addresses")
 
 
 # --- do-not-contact list ----------------------------------------------------------
