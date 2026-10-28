@@ -683,7 +683,7 @@ async def test_templates_library_and_overview(outreach):
 
     overview = (await client.get("/api/outreach/overview")).json()
     assert overview["gmail"]["connected"] is False and overview["daily_limit"] == 60 and overview["sent_24h"] == 0
-    assert (await client.put("/api/outreach/settings", json={"daily_limit": 9999})).status_code == 422
+    assert (await client.put("/api/outreach/settings", json={"daily_limit": 0})).status_code == 422
 
 
 async def test_export_neutralises_spreadsheet_formulas(outreach):

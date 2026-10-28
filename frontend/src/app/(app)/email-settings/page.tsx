@@ -452,7 +452,7 @@ function OutreachSection({ initial }: { initial: OutreachSettings }) {
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Emails per 24 hours" hint="Campaigns, follow-ups and applications together">
-            {num("daily_limit", { min: 1, max: 400 })}
+            {num("daily_limit", { min: 1 })}
           </Field>
           <Field label="Seconds between any two emails" hint="Whatever campaign they belong to">
             {num("min_gap_seconds", { min: 5, max: 600 })}
@@ -475,7 +475,7 @@ function OutreachSection({ initial }: { initial: OutreachSettings }) {
           </Field>
           <Field label="Longest wait (seconds)">{num("default_max_delay_seconds", { min: 15, max: 7200 })}</Field>
           <Field label="Emails per day, per campaign" hint="Rolling 24 hours">
-            {num("default_campaign_daily_limit", { min: 1, max: 400 })}
+            {num("default_campaign_daily_limit", { min: 1 })}
           </Field>
           <Field label="Time zone" hint="e.g. Asia/Karachi">
             <div className="flex gap-1.5">

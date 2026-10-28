@@ -305,7 +305,7 @@ export function CampaignForm({
           </Field>
           <Field label="Longest wait (seconds)">{num("max_delay_seconds", { min: 15, max: 7200 })}</Field>
           <Field label="Emails per day" hint="Rolling 24 hours">
-            {num("daily_limit", { min: 1, max: 400 })}
+            {num("daily_limit", { min: 1 })}
           </Field>
           <Field label="Time zone" hint="e.g. Asia/Karachi">
             <div className="flex gap-1.5">

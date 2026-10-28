@@ -13,7 +13,7 @@ class OutreachSettings(BaseModel):
     """Stored as one JSON document in app_config under 'outreach_settings'. They cover every campaign."""
 
     # Gmail allows 500 a day for a personal account; this stays well below it. Job applications count too.
-    daily_limit: int = Field(60, ge=1, le=400)
+    daily_limit: int = Field(60, ge=1)
     # Seconds between any two sends from the account, whatever campaign they belong to.
     min_gap_seconds: int = Field(20, ge=5, le=600)
     # Do not write again to an address that was sent something within this many days (0 turns it off).
@@ -25,7 +25,7 @@ class OutreachSettings(BaseModel):
     # What a new campaign starts with. Each campaign keeps its own copy, so changing these never touches a running one.
     default_min_delay_seconds: int = Field(45, ge=15, le=3600)
     default_max_delay_seconds: int = Field(150, ge=15, le=7200)
-    default_campaign_daily_limit: int = Field(40, ge=1, le=400)
+    default_campaign_daily_limit: int = Field(40, ge=1)
     default_window_start_hour: int = Field(0, ge=0, le=23)
     default_window_end_hour: int = Field(24, ge=1, le=24)
     default_timezone: str = "UTC"
@@ -64,7 +64,7 @@ class CampaignIn(BaseModel):
     gmail_account_id: int | None = None
     min_delay_seconds: int = Field(45, ge=15, le=3600)
     max_delay_seconds: int = Field(150, ge=15, le=7200)
-    daily_limit: int = Field(40, ge=1, le=400)
+    daily_limit: int = Field(40, ge=1)
     window_start_hour: int = Field(0, ge=0, le=23)
     window_end_hour: int = Field(24, ge=1, le=24)
     timezone: str = "UTC"
