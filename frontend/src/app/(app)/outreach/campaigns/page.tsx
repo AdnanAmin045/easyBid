@@ -5,13 +5,26 @@ import { useState } from "react";
 import { Progress } from "@/components/campaign-progress";
 import { ListBody, Pagination, SearchInput, emptyMessage } from "@/components/list";
 import { Badge, Button, Empty, Notice, PageHeader, Select } from "@/components/ui";
-import { timeAgo, usePaged, type CampaignListItem } from "@/lib/api";
+import { download, timeAgo, usePaged, type CampaignListItem } from "@/lib/api";
 
 const STATUSES = ["", "draft", "running", "paused", "completed", "cancelled"];
 
 export default function CampaignsPage() {
   const [status, setStatus] = useState("");
   const { data, error, loading, fetching, setPage, q, search } = usePaged<CampaignListItem>("/outreach/campaigns", { filters: { status } });
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const exportContacted = async () => {
+    setExporting(true);
+    setExportError("");
+    try {
+      await download("/outreach/contacted/export", "contacted-addresses.csv");
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <>
@@ -30,13 +43,16 @@ export default function CampaignsPage() {
                 ))}
               </Select>
             </div>
+            <Button loading={exporting} onClick={exportContacted} title="Every address already written to, plus the do-not-contact list, to check new leads against">
+              Export contacted
+            </Button>
             <Link href="/outreach/campaigns/new">
               <Button variant="primary">New campaign</Button>
             </Link>
           </div>
         }
       />
-      <Notice>{error}</Notice>
+      <Notice>{error || exportError}</Notice>
       <ListBody loading={loading} fetching={fetching}>
         {data?.total === 0 ? (
           <Empty>{emptyMessage(Boolean(q || status), "No campaigns yet. Start with New campaign.")}</Empty>
