@@ -206,7 +206,12 @@ async def gmail_callback(
     email = email.lower()
     token = gmail_lib.encrypt(tokens["refresh_token"], env.secret_key)
     account = await session.scalar(select(GmailAccount).where(GmailAccount.email == email))
-    if account:  # connecting the same address again just renews its access
+    if account:
+        # A send-as alias can later be connected as its own Google account. Keep the
+        # row so existing campaigns retain their account id, but stop routing it
+        # through the old parent mailbox.
+        account.kind = "gmail"
+        account.parent_id = None
         account.refresh_token, account.scopes, account.connected_at = token, tokens.get("scope", ""), utcnow()
     else:
         first = not await accounts.any_connected(session)
@@ -776,4 +781,3 @@ async def activate_prompt(prompt_id: int, session: AsyncSession = Depends(get_se
     prompt.is_active = True
     await session.commit()
     return prompt
-

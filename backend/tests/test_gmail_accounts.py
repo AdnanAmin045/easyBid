@@ -175,6 +175,26 @@ async def test_a_verified_send_as_address_becomes_a_sender_through_its_gmail(out
     assert again.json()["id"] == added.json()["id"] and len((await client.get("/api/jobs/gmail")).json()["accounts"]) == 2
 
 
+async def test_connecting_an_alias_as_its_own_google_account_replaces_parent_routing(jobs, google):
+    client, _ = jobs
+    await connect_gmail(client)
+    gmail = (await client.get("/api/jobs/gmail")).json()["accounts"][0]
+    google.send_as = [(ALIAS, "accepted")]
+    alias = (await client.post(f"/api/jobs/gmail/{gmail['id']}/aliases", json={"email": ALIAS})).json()
+
+    google.next_email, google.next_refresh = ALIAS, "rt-codevryn"
+    await connect_gmail(client)
+
+    accounts = (await client.get("/api/jobs/gmail")).json()["accounts"]
+    connected = next(a for a in accounts if a["email"] == ALIAS)
+    assert connected["id"] == alias["id"] and connected["kind"] == "gmail" and connected["parent_id"] is None
+
+    details = (await client.post("/api/jobs/extract", json={"text": JD})).json()
+    draft = (await client.post("/api/jobs/applications", json={"source_text": JD, "details": details, "to_email": "careers@acmelabs.io"})).json()
+    sent = await client.post(f"/api/jobs/applications/{draft['id']}/send", json={"gmail_account_id": connected["id"]})
+    assert sent.status_code == 200 and google.sent_with[-1] == "at-rt-codevryn"
+
+
 async def test_a_campaign_sends_as_the_alias_through_gmail_and_shares_the_gmails_limits(outreach, google):
     client, js = outreach
     await connect_gmail(client)
