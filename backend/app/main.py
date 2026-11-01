@@ -10,6 +10,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.api import public, router
 from app.jobs import api as jobs_api
+from app.jobs import accounts as job_accounts
 from app.jobs import followups as job_followups
 from app.jobs.gmail import GmailClient
 from app.outreach import api as outreach_api
@@ -103,6 +104,9 @@ async def lifespan(app: FastAPI):
         gmail=GmailClient(env.google_client_id, env.google_client_secret, env.google_redirect_uri),
         notifier=app.state.services.notifier,
     )
+    async with SessionLocal() as session:
+        await job_accounts.sync_env_smtp(session, env)
+        await session.commit()
     app.state.skill_cache = []
     # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
     tasks = [asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))]

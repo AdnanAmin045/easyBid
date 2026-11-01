@@ -47,6 +47,15 @@ class Env(BaseSettings):
     app_url: str = ""
     telegram_chat_id: str = ""
 
+    # Optional mailbox automatically connected from the server environment.
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_secure: bool = True
+    imap_host: str = "imap.hostinger.com"
+    imap_port: int = 993
+
     @property
     def dashboard_url(self) -> str:
         """Where the dashboard lives: APP_URL, or else the first CORS origin."""

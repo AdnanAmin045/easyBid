@@ -3,6 +3,8 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Env
+from app.jobs.gmail import encrypt
 from app.jobs.models import GmailAccount
 from app.jobs.schemas import JobSettings
 
@@ -33,6 +35,28 @@ async def resolve(session: AsyncSession, account_id: int | None) -> GmailAccount
 async def any_connected(session: AsyncSession) -> bool:
     return await session.scalar(select(GmailAccount.id).limit(1)) is not None
 
+
+async def sync_env_smtp(session: AsyncSession, env: Env) -> None:
+    """Keep the optional server-configured SMTP mailbox available as an account."""
+    email = env.smtp_user.strip().lower()
+    if not email or not env.smtp_host.strip() or not env.smtp_password:
+        return
+
+    account = await session.scalar(select(GmailAccount).where(GmailAccount.email == email))
+    if account and account.kind != "smtp":
+        return
+    if account is None:
+        account = GmailAccount(email=email, is_default=not await any_connected(session))
+        session.add(account)
+
+    account.kind = "smtp"
+    account.smtp_host = env.smtp_host.strip().lower()
+    account.smtp_port = env.smtp_port
+    account.smtp_secure = env.smtp_secure
+    account.smtp_user = email
+    account.smtp_password = encrypt(env.smtp_password, env.secret_key)
+    account.imap_host = env.imap_host.strip().lower()
+    account.imap_port = env.imap_port
 
 async def family(session: AsyncSession, account_id: int) -> list[int]:
     """The account and everything that shares its mailbox: a Gmail and its "send as" aliases count as one for limits."""
