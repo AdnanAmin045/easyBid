@@ -42,7 +42,10 @@ MIN_SENT_FOR_BOUNCE_RATE = 10
 
 
 async def outreach_settings(session: AsyncSession) -> OutreachSettings:
-    return OutreachSettings(**await store.get_config(session, SETTINGS_KEY))
+    settings = OutreachSettings(**await store.get_config(session, SETTINGS_KEY))
+    # Applications and campaigns use one writing-model setting from Email settings.
+    jobs = await jobs_settings(session)
+    return settings.model_copy(update={"model": jobs.model})
 
 
 async def jobs_settings(session: AsyncSession) -> JobSettings:

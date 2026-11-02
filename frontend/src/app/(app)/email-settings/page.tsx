@@ -403,7 +403,7 @@ function JobsSection({ initial }: { initial: JobSettings }) {
           <Field label="Your name" hint="Shown as the sender, e.g. Adnan Amin. Used by campaigns too.">
             <Input value={s.sender_name} maxLength={120} onChange={(e) => update({ sender_name: e.target.value })} />
           </Field>
-          <Field label="Writing model">
+          <Field label="Writing model" hint="Shared by job applications, AI written campaign emails and AI template generation.">
             <ModelSelect value={s.model} onChange={(model) => update({ model })} />
           </Field>
           <div className="sm:col-span-2">
@@ -504,13 +504,6 @@ function OutreachSection({ initial }: { initial: OutreachSettings }) {
             <Check label="Weekdays only" checked={s.default_weekdays_only} onChange={(v) => update({ default_weekdays_only: v })} />
             <Check label="Warm up" hint="10 emails on day one, 10 more each day, up to the daily limit." checked={s.default_ramp_up} onChange={(v) => update({ default_ramp_up: v })} />
           </div>
-        </div>
-      </Card>
-      <Card title="AI">
-        <div className="max-w-sm">
-          <Field label="Writing model" hint="Used for templates and for campaigns where the AI writes each email.">
-            <ModelSelect value={s.model} onChange={(model) => update({ model })} />
-          </Field>
         </div>
       </Card>
     </Section>
