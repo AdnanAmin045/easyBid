@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { CampaignForm, EMPTY_CAMPAIGN } from "@/components/campaign-form";
 import { Loading, PageHeader } from "@/components/ui";
-import { api, useApi, type Campaign, type CampaignInput, type OutreachSettings } from "@/lib/api";
+import { api, useApi, type Campaign, type CampaignInput, type OutreachSettings, type Resume } from "@/lib/api";
 
 export default function NewCampaignPage() {
   const router = useRouter();
   const { data: settings } = useApi<OutreachSettings>("/outreach/settings");
+  const { data: resumes } = useApi<Resume[]>("/jobs/resumes");
 
   async function create(input: CampaignInput) {
     const campaign = await api<Campaign>("/outreach/campaigns", { method: "POST", body: input });
@@ -21,11 +22,12 @@ export default function NewCampaignPage() {
         title="New campaign"
         subtitle="Write the email once, then paste or upload your list. Worklane sends them slowly, from your own Gmail, and stops if anything looks wrong."
       />
-      {settings ? (
+      {settings && resumes ? (
         <CampaignForm
-          // The schedule a campaign starts with comes from Email settings.
+          // New campaigns inherit the shared default CV and schedule. The user can still choose another CV or none.
           initial={{
             ...EMPTY_CAMPAIGN,
+            resume_id: resumes.find((resume) => resume.is_default)?.id ?? null,
             min_delay_seconds: settings.default_min_delay_seconds,
             max_delay_seconds: settings.default_max_delay_seconds,
             daily_limit: settings.default_campaign_daily_limit,
