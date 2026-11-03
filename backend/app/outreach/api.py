@@ -55,14 +55,9 @@ async def _recipient(session: AsyncSession, campaign_id: int, recipient_id: int)
     return recipient
 
 
-def _open(campaign: Campaign) -> None:
-    if campaign.status == CampaignStatus.CANCELLED:
-        raise HTTPException(409, "This campaign was cancelled. Make a new campaign to send more.")
-
-
 def _reopen(campaign: Campaign, why: str = "there are new recipients") -> None:
-    """A finished campaign that gets someone new to write to waits, paused, for the user to resume it."""
-    if campaign.status == CampaignStatus.COMPLETED:
+    """A finished or cancelled campaign that gets someone new to write to waits, paused, for the user to resume it."""
+    if campaign.status in (CampaignStatus.COMPLETED, CampaignStatus.CANCELLED):
         campaign.status, campaign.finished_at = CampaignStatus.PAUSED, None
         campaign.pause_reason = f"Reopened: {why}. Resume to send."
 
@@ -268,7 +263,6 @@ async def get_campaign(campaign_id: int, session: AsyncSession = Depends(get_ses
 @router.patch("/campaigns/{campaign_id}", response_model=schemas.CampaignOut)
 async def update_campaign(campaign_id: int, body: schemas.CampaignPatch, session: AsyncSession = Depends(get_session)):
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     changes = body.model_dump(exclude_unset=True, exclude={"clear_resume"})
     if "mode" in changes and changes["mode"] != campaign.mode and campaign.status == CampaignStatus.RUNNING:
         raise HTTPException(409, "Pause the campaign before changing how its emails are written")
@@ -401,12 +395,34 @@ async def check_campaign(campaign_id: int, session: AsyncSession = Depends(get_s
     return await _check(session, js, await _campaign(session, campaign_id))
 
 
+async def _requeue(session: AsyncSession, campaign: Campaign) -> None:
+    """Running a finished or cancelled campaign again gives back whoever it never reached: people skipped by the cancel
+    and failures that are safe to retry. Anyone who may already have been emailed is left alone."""
+    await session.execute(
+        update(Recipient)
+        .where(Recipient.campaign_id == campaign.id, Recipient.status == RecipientStatus.SKIPPED, Recipient.error == "Campaign cancelled")
+        .values(status=RecipientStatus.PENDING, error=None, attempts=0, retry_at=None)
+    )
+    await session.execute(
+        update(Recipient)
+        .where(
+            Recipient.campaign_id == campaign.id,
+            Recipient.status == RecipientStatus.FAILED,
+            ~func.coalesce(Recipient.error, "").contains("Outcome unknown"),
+            ~func.coalesce(Recipient.error, "").contains("stopped while sending"),
+        )
+        .values(status=RecipientStatus.PENDING, error=None, attempts=0, retry_at=None)
+    )
+    campaign.finished_at = None
+
+
 @router.post("/campaigns/{campaign_id}/start", response_model=schemas.CampaignOut)
 async def start_campaign(campaign_id: int, session: AsyncSession = Depends(get_session), js: JobServices = Depends(job_services)):
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     if campaign.status == CampaignStatus.RUNNING:
         return await _out(session, campaign)
+    if campaign.status in (CampaignStatus.COMPLETED, CampaignStatus.CANCELLED):
+        await _requeue(session, campaign)
     check = await _check(session, js, campaign)
     if check.blockers:
         raise HTTPException(409, " ".join(check.blockers))
@@ -431,7 +447,6 @@ async def pause_campaign(campaign_id: int, session: AsyncSession = Depends(get_s
 @router.post("/campaigns/{campaign_id}/cancel", response_model=schemas.CampaignOut)
 async def cancel_campaign(campaign_id: int, session: AsyncSession = Depends(get_session)):
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     await session.execute(
         update(Recipient)
         .where(Recipient.campaign_id == campaign_id, Recipient.status == RecipientStatus.PENDING)
@@ -454,7 +469,6 @@ async def import_recipients(
     js: JobServices = Depends(job_services),
 ):
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     return await _add_recipients(session, js, campaign, importer.parse(body.text), body.skip_recent, body.check_domains)
 
 
@@ -469,7 +483,6 @@ async def import_recipients_file(
 ):
     """An Excel (.xlsx) file, or a CSV/TSV/text file, read exactly like pasted text."""
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     data = await file.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
         raise HTTPException(413, "The file is larger than 5 MB. Split it and import in parts.")
@@ -698,7 +711,6 @@ async def retry_recipient(
 ):
     """Put a failed or held-back recipient back in the queue. allow_recent overrides the 'written to recently' hold."""
     campaign = await _campaign(session, campaign_id)
-    _open(campaign)
     recipient = await _recipient(session, campaign_id, recipient_id)
     _editable_recipient(recipient)
     if await engine.is_suppressed(session, recipient.email):

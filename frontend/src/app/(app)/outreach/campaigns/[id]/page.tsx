@@ -397,7 +397,6 @@ export default function CampaignPage() {
   const base = `/outreach/campaigns/${campaign.id}`;
   const total = totalCount(campaign.counts);
   const delivered = deliveredCount(campaign.counts);
-  const closed = campaign.status === "cancelled";
 
   async function run(name: string, fn: () => Promise<void>) {
     setBusy(name);
@@ -477,9 +476,9 @@ export default function CampaignPage() {
       {running && !campaign.waiting && ((campaign.counts.pending ?? 0) > 0 || campaign.followups_scheduled === 0) && <Notice tone="green">Sending. The next email goes out after a random pause{campaign.next_send_at ? `, around ${new Date(campaign.next_send_at).toLocaleTimeString()}` : ""}.</Notice>}
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        {(campaign.status === "draft" || campaign.status === "paused" || campaign.status === "completed") && (
-          <Button variant="primary" loading={busy === "start"} disabled={locked || campaign.status === "completed" && (campaign.counts.pending ?? 0) === 0} onClick={start}>
-            {campaign.status === "paused" ? "Resume" : "Start sending"}
+        {(campaign.status === "draft" || campaign.status === "paused" || campaign.status === "completed" || campaign.status === "cancelled") && (
+          <Button variant="primary" loading={busy === "start"} disabled={locked} onClick={start}>
+            {campaign.status === "paused" ? "Resume" : campaign.status === "draft" ? "Start sending" : "Run again"}
           </Button>
         )}
         {running && (
@@ -494,8 +493,8 @@ export default function CampaignPage() {
           Export CSV
         </Button>
         <span className="flex-1" />
-        {!closed && (
-          <Button variant="danger" loading={busy === "cancel"} disabled={locked} onClick={() => act("cancel", "cancel", "Cancel this campaign? Emails not yet sent will not be sent.")}>
+        {campaign.status !== "cancelled" && (
+          <Button variant="danger" loading={busy === "cancel"} disabled={locked} onClick={() => act("cancel", "cancel", "Cancel this campaign? Emails not yet sent will not be sent until you run it again.")}>
             Cancel campaign
           </Button>
         )}
@@ -532,11 +531,9 @@ export default function CampaignPage() {
 
       {tab === "recipients" ? (
         <div className="space-y-6">
-          {!closed && <Import campaign={campaign} onDone={() => { reload(); setVersion((v) => v + 1); }} />}
+          <Import campaign={campaign} onDone={() => { reload(); setVersion((v) => v + 1); }} />
           <Recipients campaign={campaign} version={version} onChanged={reload} />
         </div>
-      ) : closed ? (
-        <Notice tone="amber">This campaign was cancelled and can no longer be changed.</Notice>
       ) : (
         <CampaignForm key={campaign.id} initial={campaign} columns={campaign.columns} submitLabel="Save changes" onSubmit={saveSettings} />
       )}

@@ -663,8 +663,8 @@ async def test_campaign_rules_and_lifecycle(outreach, google):
     assert (await client.delete(f"/api/outreach/campaigns/{cid}")).status_code == 409  # it has sent emails
     cancelled = (await client.post(f"/api/outreach/campaigns/{cid}/cancel")).json()
     assert cancelled["status"] == "cancelled" and cancelled["counts"] == {"sent": 1, "skipped": 3}
-    assert (await client.post(f"/api/outreach/campaigns/{cid}/start")).status_code == 409
-    assert (await client.post(f"/api/outreach/campaigns/{cid}/recipients/import", json={"text": "q@acmelabs.io"})).status_code == 409
+    restarted = (await client.post(f"/api/outreach/campaigns/{cid}/start")).json()  # a cancelled campaign can run again
+    assert restarted["status"] == "running" and restarted["counts"] == {"sent": 1, "pending": 3}
 
     empty = await make_campaign(client, name="Never used")
     assert (await client.delete(f"/api/outreach/campaigns/{empty['id']}")).status_code == 204
