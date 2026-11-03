@@ -82,7 +82,7 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
       <Notice>{error}</Notice>
       <p className="mb-3 text-sm text-stone-600">
         Paste email addresses in any form, or upload an Excel (.xlsx) or CSV file. Columns <b>email</b>, <b>name</b>, <b>company</b> are recognised; any other column becomes a{" "}
-        <code>{"{{variable}}"}</code>. <b>Already written your emails?</b> Use two columns, the address and the whole email: they are sent exactly as written. A first line like{" "}
+        <code>{"{{variable}}"}</code>. Columns <b>Follow up 1</b> and <b>Follow up 2</b> give each person their own follow-ups, sent after the days set in Email settings. <b>Already written your emails?</b> Use two columns, the address and the whole email: they are sent exactly as written. A first line like{" "}
         <code>Subject: Hello</code> becomes the subject; a <b>subject</b> column works too.
       </p>
       <Textarea
@@ -123,6 +123,7 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
             {result.updated > 0 && <>, <b>{result.updated}</b> updated with the new message</>}
             {result.held_back > 0 && <>, <b>{result.held_back}</b> held back (see the Skipped filter for why)</>}
             {result.with_own_content > 0 && <>, <b>{result.with_own_content}</b> with their own message</>}
+            {result.with_followups > 0 && <>, <b>{result.with_followups}</b> with their own follow-ups</>}
             {result.rejected_total > 0 && <>, <b>{result.rejected_total}</b> rejected</>}.
           </p>
           {result.warnings?.map((w) => (
@@ -148,13 +149,25 @@ function Import({ campaign, onDone }: { campaign: Campaign; onDone: () => void }
 
 function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign; recipient: OutreachRecipient; onChanged: () => void }) {
   const editable = ["pending", "failed", "skipped"].includes(recipient.status);
-  const [form, setForm] = useState({ email: recipient.email, name: recipient.name, company: recipient.company, subject: recipient.subject, body: recipient.body });
+  const original = {
+    email: recipient.email,
+    name: recipient.name,
+    company: recipient.company,
+    subject: recipient.subject,
+    body: recipient.body,
+    followup_1: recipient.followup_bodies[0] ?? "",
+    followup_2: recipient.followup_bodies[1] ?? "",
+  };
+  const [form, setForm] = useState(original);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [step, setStep] = useState(0);
   const preview = useApi<EmailPreview>(`/outreach/campaigns/${campaign.id}/preview?recipient_id=${recipient.id}&step=${step}`);
   const base = `/outreach/campaigns/${campaign.id}/recipients/${recipient.id}`;
-  const dirty = (Object.keys(form) as (keyof typeof form)[]).some((k) => form[k] !== recipient[k]);
+  const dirty = (Object.keys(form) as (keyof typeof form)[]).some((k) => form[k] !== original[k]);
+  const { followup_1, followup_2, ...rest } = form;
+  const payload = { ...rest, followup_bodies: [followup_1, followup_2] };
+  const steps = Math.max(campaign.followups.length, recipient.followup_bodies.length);
   const heldRecently = recipient.status === "skipped" && (recipient.error ?? "").startsWith("Already");
 
   async function run(name: string, fn: () => Promise<unknown>) {
@@ -170,10 +183,10 @@ function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign
     setBusy("");
   }
 
-  const save = () => run("save", () => api(base, { method: "PATCH", body: form }));
+  const save = () => run("save", () => api(base, { method: "PATCH", body: payload }));
   const retry = (allowRecent: boolean) => run("retry", () => api(`${base}/retry${allowRecent ? "?allow_recent=true" : ""}`, { method: "POST" }));
   const generate = () => run("generate", async () => {
-    if (dirty) await api(base, { method: "PATCH", body: form });
+    if (dirty) await api(base, { method: "PATCH", body: payload });
     await api(`${base}/generate`, { method: "POST" });
   });
   const remove = () => run("remove", async () => {
@@ -185,12 +198,12 @@ function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-stone-500">Exactly what they get</p>
-          {campaign.followups.length > 0 && (
+          {steps > 0 && (
             <Select aria-label="Which email" className="!w-48 !py-1 text-xs" value={step} onChange={(e) => setStep(Number(e.target.value))}>
               <option value={0}>First email</option>
-              {campaign.followups.map((f, i) => (
+              {Array.from({ length: steps }, (_, i) => (
                 <option key={i} value={i + 1}>
-                  Follow-up {i + 1} (after {f.days} d)
+                  Follow-up {i + 1} (after {campaign.followups[i]?.days ?? campaign.sheet_followup_days[Math.min(i, 1)]} d)
                 </option>
               ))}
             </Select>
@@ -235,6 +248,14 @@ function RecipientPanel({ campaign, recipient, onChanged }: { campaign: Campaign
             <Field label="Own message" hint="Leave empty to use the campaign's template.">
               <Textarea rows={5} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />
             </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Follow-up 1" hint="Leave empty to use the campaign's follow-up 1, if any.">
+                <Textarea rows={3} value={form.followup_1} maxLength={20000} onChange={(e) => setForm({ ...form, followup_1: e.target.value })} />
+              </Field>
+              <Field label="Follow-up 2" hint="Needs follow-up 1 to be filled in too.">
+                <Textarea rows={3} value={form.followup_2} maxLength={20000} onChange={(e) => setForm({ ...form, followup_2: e.target.value })} />
+              </Field>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" loading={busy === "save"} disabled={Boolean(busy) || !dirty} onClick={save}>
                 Save
@@ -333,7 +354,7 @@ function RecipientRow({ campaign, recipient: r, open, onToggle, onChanged }: { c
           </button>
           <span className="block truncate text-xs text-stone-500">{[r.name, r.company].filter(Boolean).join(" · ") || "No name"}</span>
         </td>
-        <td className="hidden max-w-sm truncate px-3 py-2.5 text-xs text-stone-500 md:table-cell">{r.error ?? (r.status === "sent" && campaign.followups.length > 0 ? `Follow-ups: ${r.followups_sent} of ${campaign.followups.length} sent` : r.body ? "Has its own message" : "")}</td>
+        <td className="hidden max-w-sm truncate px-3 py-2.5 text-xs text-stone-500 md:table-cell">{r.error ?? (r.status === "sent" && Math.max(campaign.followups.length, r.followup_bodies.length) > 0 ? `Follow-ups: ${r.followups_sent} of ${Math.max(campaign.followups.length, r.followup_bodies.length)} sent` : r.body ? "Has its own message" : "")}</td>
         <td className="px-3 py-2.5">
           <Badge>{r.status}</Badge>
         </td>
@@ -487,7 +508,7 @@ export default function CampaignPage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat label="Waiting" value={campaign.counts.pending ?? 0} accent />
-        <Stat label="Sent" value={delivered} hint={`${campaign.sent_24h} in 24 h${campaign.followups.length ? `, ${campaign.followups_sent} follow-ups` : ""}`} />
+        <Stat label="Sent" value={delivered} hint={`${campaign.sent_24h} in 24 h${campaign.followups_sent ? `, ${campaign.followups_sent} follow-ups` : ""}`} />
         <Stat label="Replied" value={campaign.counts.replied ?? 0} />
         <Stat label="Bounced" value={campaign.counts.bounced ?? 0} />
         <Stat label="Failed" value={campaign.counts.failed ?? 0} />

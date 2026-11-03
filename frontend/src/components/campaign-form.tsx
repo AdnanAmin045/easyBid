@@ -25,6 +25,7 @@ export const EMPTY_CAMPAIGN: CampaignInput = {
   weekdays_only: false,
   ramp_up: true,
   followups: [],
+  sheet_followup_days: [3, 4],
 };
 
 const BUILTIN = ["first_name", "name", "company", "email"];
@@ -292,6 +293,25 @@ export function CampaignForm({
         onChange={(followups) => update({ followups })}
         variables="Variables like {{first_name|there}} and your list's columns work here too."
       />
+
+      <Card title="Follow-ups from your sheet">
+        <p className="mb-4 text-sm text-stone-500">
+          If your list has the columns <b>Follow up 1</b> and <b>Follow up 2</b>, each person gets their own text at these times. A follow-up above with the same number sends its own days instead, and its text for anyone whose row is empty.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {["First follow-up (days after the first email)", "Next follow-up (days after the first follow-up)"].map((label, i) => (
+            <Field key={i} label={label} hint="1 to 60">
+              <Input
+                type="number"
+                min={1}
+                max={60}
+                value={String(c.sheet_followup_days[i])}
+                onChange={(e) => update({ sheet_followup_days: c.sheet_followup_days.map((d, j) => (j === i ? Number(e.target.value) : d)) })}
+              />
+            </Field>
+          ))}
+        </div>
+      </Card>
 
       <SendFrom value={c.gmail_account_id} onChange={(gmail_account_id) => update({ gmail_account_id })} />
 

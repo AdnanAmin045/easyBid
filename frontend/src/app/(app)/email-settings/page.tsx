@@ -465,6 +465,19 @@ function OutreachSection({ initial }: { initial: OutreachSettings }) {
           </Field>
         </div>
       </Card>
+      <Card title="Follow-ups written in your sheet">
+        <p className="mb-4 text-sm text-stone-500">
+          Add the columns <b>Follow up 1</b> and <b>Follow up 2</b> to your list to write each person their own follow-ups. Set here when they go out: counted from the first email, then from the first follow-up. Anyone who replies or bounces is left alone. New campaigns copy these, and can change them under Follow-ups.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="First follow-up (days after the first email)" hint="1 to 60">
+            {num("default_first_followup_days", { min: 1, max: 60 })}
+          </Field>
+          <Field label="Next follow-up (days after the first follow-up)" hint="1 to 60. Both together must stay within 60 days.">
+            {num("default_next_followup_days", { min: 1, max: 60 })}
+          </Field>
+        </div>
+      </Card>
       <Card title="Schedule for new campaigns">
         <p className="mb-4 text-sm text-stone-500">
           Every campaign gets its own copy of these when it is created, and can change them under Pace and schedule. Editing them here does not touch campaigns that already exist.

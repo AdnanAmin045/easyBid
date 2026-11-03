@@ -525,6 +525,8 @@ export interface CampaignInput {
   weekdays_only: boolean;
   ramp_up: boolean;
   followups: FollowUp[];
+  // Days before the follow-ups written in the recipient sheet: [after the first email, after the first follow-up].
+  sheet_followup_days: number[];
 }
 
 export interface CampaignListItem {
@@ -563,6 +565,7 @@ export interface OutreachRecipient {
   sent_at: string | null;
   last_contact_at: string | null;
   followups_sent: number;
+  followup_bodies: string[];
   gmail_thread_id: string | null;
   created_at: string;
 }
@@ -574,6 +577,7 @@ export interface ImportResult {
   rejected: { line: number; value: string; reason: string }[];
   rejected_total: number;
   with_own_content: number;
+  with_followups: number;
   warnings: string[];
   columns: string[];
 }
@@ -619,6 +623,8 @@ export interface OutreachSettings {
   default_timezone: string;
   default_weekdays_only: boolean;
   default_ramp_up: boolean;
+  default_first_followup_days: number;
+  default_next_followup_days: number;
 }
 
 export interface Suppression {

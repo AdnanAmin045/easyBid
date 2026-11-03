@@ -1,7 +1,8 @@
 """Read a recipient list: pasted addresses, free text, a CSV/TSV sheet, or an Excel file.
 
-A header row maps columns to the recipient: email (required), name, company, subject and body. Every other column
-is kept and becomes a template variable. When a row has its own body, it is sent as written.
+A header row maps columns to the recipient: email (required), name, company, subject and body, and up to two
+follow-up texts ("Follow up 1", "Follow up 2"). Every other column is kept and becomes a template variable. When a
+row has its own body, it is sent as written; its follow-ups go out after the delays chosen in the settings.
 
 Without a header, the columns are told apart by what they contain, in any order: the one full of addresses, then the
 longest text is the message and a shorter one the subject. An email may also start with a line "Subject: ...."
@@ -25,7 +26,18 @@ ALIASES = {
     "last_name": {"last_name", "lastname", "last", "surname", "family_name"},
     "company": {"company", "company_name", "organization", "organisation", "employer", "business"},
     "subject": {"subject", "email_subject"},
+    "followup_1": set(),  # recognised by followup_step(), which also reads "First follow-up" and "Follow up email 1"
+    "followup_2": set(),
     "body": {"body", "email_body", "message", "content", "mail_body", "full_email", "email_text", "mail_text", "text", "draft", "email_message"},
+}
+FOLLOWUP_ROLES = ("followup_1", "followup_2")
+MAX_FOLLOWUP_CHARS = 20000
+# Words that only say what a follow-up column holds ("Follow up email body 1").
+_FILLER = {"email", "mail", "message", "body", "text", "content", "copy", "draft"}
+_FOLLOWUP_STEP = {
+    "followup": 1, "followup1": 1, "firstfollowup": 1, "followupfirst": 1, "1stfollowup": 1, "followup1st": 1, "onefollowup": 1, "followupone": 1,
+    "followup2": 2, "secondfollowup": 2, "followupsecond": 2, "2ndfollowup": 2, "followup2nd": 2, "twofollowup": 2, "followuptwo": 2,
+    "nextfollowup": 2, "followupnext": 2,
 }
 DELIMITERS = (",", "\t", ";", "|")
 SUBJECT_LINE = re.compile(r"\A\s*subject\s*:[ \t]*([^\n]+)\n+", re.I)
@@ -40,6 +52,7 @@ class Row:
     subject: str = ""
     body: str = ""
     fields: dict = field(default_factory=dict)
+    followups: list[str] = field(default_factory=list)  # the sheet's own follow-up texts, in order
     line: int = 0
 
 
@@ -71,6 +84,30 @@ def clean_address(value: str) -> tuple[str, str] | None:
     return email, name
 
 
+def followup_step(name: str) -> int | None:
+    """1 or 2 when the (already normalised) column name is the first or the second follow-up text."""
+    tokens = [t for t in name.split("_") if t and t not in _FILLER]
+    return _FOLLOWUP_STEP.get("".join(tokens)) if tokens else None
+
+
+def normalize_followups(texts: list[str]) -> list[str]:
+    """Clean follow-up texts, in order. Raises ValueError for anything that could not be sent properly.
+
+    At most two. A text cannot follow an empty one: a gap would leave a follow-up with nothing to say.
+    """
+    cleaned = [t.replace("\r\n", "\n").replace("\r", "\n").strip() for t in texts]
+    while cleaned and not cleaned[-1]:
+        cleaned.pop()
+    if len(cleaned) > len(FOLLOWUP_ROLES):
+        raise ValueError(f"At most {len(FOLLOWUP_ROLES)} follow-ups can be written per recipient")
+    for i, text in enumerate(cleaned, start=1):
+        if not text:
+            raise ValueError(f"Follow-up {i} is empty but a later follow-up is filled in")
+        if len(text) > MAX_FOLLOWUP_CHARS:
+            raise ValueError(f"Follow-up {i} is longer than {MAX_FOLLOWUP_CHARS} characters")
+    return cleaned
+
+
 def _says_subject(words: set[str]) -> bool:
     return "subject" in words
 
@@ -92,6 +129,8 @@ def _header_map(cells: list[str]) -> dict[int, str] | None:
         if not name:
             continue
         role = next((r for r, names in ALIASES.items() if name in names), None)
+        if role is None and (step := followup_step(name)):
+            role = f"followup_{step}"
         roles[i] = role or name
     if "email" not in roles.values():
         return None
@@ -164,7 +203,7 @@ def _from_rows(rows, mapping: dict[int, str], has_header: bool) -> Sheet:
     """rows: (line number, cells) pairs, without the header row."""
     sheet = Sheet(has_header=has_header)
     seen: set[str] = set()
-    extra = [role for role in mapping.values() if role not in ALIASES]
+    extra = [role for role in mapping.values() if role not in ALIASES]  # follow-up roles are in ALIASES too
     sheet.columns = list(dict.fromkeys(extra))
     for line, cells in rows:
         if not any(c.strip() for c in cells):
@@ -188,6 +227,12 @@ def _from_rows(rows, mapping: dict[int, str], has_header: bool) -> Sheet:
         found = SUBJECT_LINE.match(body + "\n")
         if found and not subject:
             subject, body = " ".join(found.group(1).split())[:300], body[found.end() - 1 :].strip()
+        try:
+            followups = normalize_followups([values.get(role, "") for role in FOLLOWUP_ROLES])
+        except ValueError as e:
+            sheet.rejected.append(Rejected(line, email, str(e)))
+            seen.discard(email)
+            continue
         sheet.rows.append(
             Row(
                 email=email,
@@ -196,6 +241,7 @@ def _from_rows(rows, mapping: dict[int, str], has_header: bool) -> Sheet:
                 subject=subject,
                 body=body,
                 fields={c: values[c] for c in sheet.columns if values.get(c)},
+                followups=followups,
                 line=line,
             )
         )

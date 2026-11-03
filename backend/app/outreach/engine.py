@@ -39,6 +39,7 @@ WARMUP_STEP = 10  # emails more per day while a campaign warms up
 GENERATE_PER_TICK = 2
 CHECKS_PER_TICK = 5
 MIN_SENT_FOR_BOUNCE_RATE = 10
+DEFAULT_SHEET_DAYS = [3, 4]
 
 
 async def outreach_settings(session: AsyncSession) -> OutreachSettings:
@@ -291,8 +292,8 @@ async def _pause(session: AsyncSession, campaign_ids: list[int], reason: str, no
 
 async def finish_if_done(session: AsyncSession, campaign: Campaign, now: datetime, notify=None) -> bool:
     waiting = Recipient.status.in_([RecipientStatus.PENDING, RecipientStatus.SENDING])
-    if campaign.followups:  # someone who has been written to and still has follow-ups ahead is not finished
-        waiting = or_(waiting, (Recipient.status == RecipientStatus.SENT) & (Recipient.followups_sent < len(campaign.followups)))
+    # someone who has been written to and still has follow-ups ahead is not finished
+    waiting = or_(waiting, (Recipient.status == RecipientStatus.SENT) & (Recipient.followups_sent < followups_due(campaign)))
     open_left = await session.scalar(select(func.count()).select_from(Recipient).where(Recipient.campaign_id == campaign.id, waiting))
     if open_left:
         return False
@@ -301,6 +302,11 @@ async def finish_if_done(session: AsyncSession, campaign: Campaign, now: datetim
     if notify:
         await notify(f"Outreach campaign '{campaign.name}' finished.")
     return True
+
+
+def followups_due(campaign: Campaign):
+    """SQL: how many follow-ups each recipient of the campaign is due, see followup_count()."""
+    return func.greatest(len(campaign.followups or []), func.jsonb_array_length(Recipient.followup_bodies))
 
 
 async def _claim_recipient(session: AsyncSession, campaign: Campaign, now: datetime) -> Recipient | None:
@@ -324,9 +330,32 @@ async def _claim_recipient(session: AsyncSession, campaign: Campaign, now: datet
     return recipient
 
 
+def followup_count(campaign: Campaign, recipient: Recipient) -> int:
+    """How many follow-ups this person is due: the campaign's, or more when their sheet row wrote more."""
+    return max(len(campaign.followups or []), len(recipient.followup_bodies or []))
+
+
+def followup_plan(campaign: Campaign, recipient: Recipient, step: int) -> dict:
+    """Follow-up `step` (0 based) of this person: {days, subject, body, attach_resume}.
+
+    The text is the one in their sheet row, else the campaign's follow-up of the same number (empty when neither has
+    one). The delay is the campaign step's own, else the one chosen in the settings for follow-ups of the sheet.
+    """
+    own = recipient.followup_bodies or []
+    steps = campaign.followups or []
+    base = steps[step] if step < len(steps) else {}
+    sheet_days = campaign.sheet_followup_days or DEFAULT_SHEET_DAYS
+    return {
+        "days": base.get("days") or sheet_days[min(step, len(sheet_days) - 1)],
+        "subject": base.get("subject", ""),
+        "body": (own[step] if step < len(own) else "") or base.get("body", ""),
+        "attach_resume": bool(base.get("attach_resume")),
+    }
+
+
 def compose_followup(campaign: Campaign, recipient: Recipient, step: int, jobs: JobSettings) -> Composed:
     """Follow-up number `step` (0 based) for this recipient, in the same conversation as the first email."""
-    plan = campaign.followups[step]
+    plan = followup_plan(campaign, recipient, step)
     ctx = render.context(recipient.email, recipient.name, recipient.company, recipient.fields)
     body = render.render(plan["body"], ctx, f"{recipient.id}f{step}b")
     own_subject = render.render(plan.get("subject", ""), ctx, f"{recipient.id}f{step}s")
@@ -350,16 +379,15 @@ async def _claim_followup(
     A follow-up goes from the Gmail the first email went from. `gated_account_id` is the account whose limits were
     already checked; anyone from another account (the campaign was switched) has that account checked here.
     """
-    plan = campaign.followups or []
-    if not plan:
-        return None
-    soonest = min(step["days"] for step in plan)
+    steps = campaign.followups or []
+    sheet_days = campaign.sheet_followup_days or DEFAULT_SHEET_DAYS
+    soonest = min([step["days"] for step in steps] + sheet_days)
     rows = await session.scalars(
         select(Recipient)
         .where(
             Recipient.campaign_id == campaign.id,
             Recipient.status == RecipientStatus.SENT,
-            Recipient.followups_sent < len(plan),
+            Recipient.followups_sent < followups_due(campaign),
             Recipient.gmail_thread_id.is_not(None),
             Recipient.last_contact_at <= now - timedelta(days=soonest),
             or_(Recipient.retry_at.is_(None), Recipient.retry_at <= now),
@@ -370,7 +398,7 @@ async def _claim_followup(
     )
     for recipient in rows:
         step = recipient.followups_sent
-        if recipient.last_contact_at + timedelta(days=plan[step]["days"]) <= now:
+        if recipient.last_contact_at + timedelta(days=followup_plan(campaign, recipient, step)["days"]) <= now:
             if recipient.gmail_account_id not in (None, gated_account_id) and await account_reason(
                 session, recipient.gmail_account_id, now, s
             ):
@@ -392,7 +420,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         return False
 
     if await is_suppressed(session, recipient.email):
-        recipient.followups_sent = len(campaign.followups)
+        recipient.followups_sent = followup_count(campaign, recipient)
         settle("On the do-not-contact list, no follow-ups")
         await session.commit()
         return False
@@ -407,7 +435,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
     # The conversation lives in the mailbox the first email went from, so the follow-up goes from there too.
     account = await accounts.resolve(session, recipient.gmail_account_id) if recipient.gmail_account_id else None
     if account is None:
-        recipient.followups_sent = len(campaign.followups)
+        recipient.followups_sent = followup_count(campaign, recipient)
         settle("Sent from a Gmail account that is no longer connected, no follow-ups")
         await session.commit()
         return False
@@ -445,7 +473,7 @@ async def _deliver_followup(js, session: AsyncSession, campaign: Campaign, recip
         return False
 
     attachment = None
-    if campaign.followups[step].get("attach_resume") and campaign.resume_id and campaign.resume:
+    if followup_plan(campaign, recipient, step)["attach_resume"] and campaign.resume_id and campaign.resume:
         data = await session.scalar(select(JobResume.data).where(JobResume.id == campaign.resume_id))
         attachment = Attachment(campaign.resume.filename, campaign.resume.content_type, data)
     message = gmail_lib.build_message(

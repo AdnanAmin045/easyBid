@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.jobs.schemas import FollowUp, ResumeOut
+from app.outreach.importer import normalize_followups
 
 Mode = Literal["template", "ai"]
 
@@ -31,6 +32,9 @@ class OutreachSettings(BaseModel):
     default_timezone: str = "UTC"
     default_weekdays_only: bool = False
     default_ramp_up: bool = True
+    # When the follow-ups written in a recipient sheet go out: days after the first email, then days after the first follow-up.
+    default_first_followup_days: int = Field(3, ge=1, le=60)
+    default_next_followup_days: int = Field(4, ge=1, le=60)
 
     @field_validator("default_timezone")
     @classmethod
@@ -47,7 +51,17 @@ class OutreachSettings(BaseModel):
             raise ValueError("The longest wait must not be shorter than the shortest wait")
         if self.default_window_end_hour <= self.default_window_start_hour:
             raise ValueError("The sending window must end after it starts")
+        if self.default_first_followup_days + self.default_next_followup_days > 60:
+            raise ValueError("The follow-ups must all be sent within 60 days of the first email")
         return self
+
+
+def check_sheet_days(days: list[int]) -> list[int]:
+    if len(days) != 2 or any(not 1 <= d <= 60 for d in days):
+        raise ValueError("Give two delays of 1 to 60 days: after the first email, and after the first follow-up")
+    if sum(days) > 60:
+        raise ValueError("The follow-ups must all be sent within 60 days of the first email")
+    return days
 
 
 class CampaignIn(BaseModel):
@@ -71,6 +85,10 @@ class CampaignIn(BaseModel):
     weekdays_only: bool = False
     ramp_up: bool = True
     followups: list[FollowUp] = Field(default=[], max_length=5)
+    # Days before the follow-ups written in the recipient sheet: [after the first email, after the first follow-up].
+    sheet_followup_days: list[int] = [3, 4]
+
+    _sheet_days = field_validator("sheet_followup_days")(check_sheet_days)
 
     @field_validator("timezone")
     @classmethod
@@ -117,6 +135,7 @@ class CampaignPatch(BaseModel):
     weekdays_only: bool | None = None
     ramp_up: bool | None = None
     followups: list[FollowUp] | None = None
+    sheet_followup_days: list[int] | None = None
 
 
 class CampaignBrief(BaseModel):
@@ -156,6 +175,7 @@ class CampaignOut(CampaignBrief):
     ramp_up: bool
     next_send_at: datetime | None
     followups: list[FollowUp] = []
+    sheet_followup_days: list[int] = [3, 4]
     followups_sent: int = 0  # follow-up emails that went out
     followups_scheduled: int = 0  # people still waiting for a follow-up
     counts: dict[str, int] = {}
@@ -181,6 +201,7 @@ class RecipientOut(BaseModel):
     sent_at: datetime | None
     last_contact_at: datetime | None
     followups_sent: int
+    followup_bodies: list[str] = []
     gmail_thread_id: str | None
     created_at: datetime
 
@@ -194,6 +215,13 @@ class RecipientPatch(BaseModel):
     subject: str | None = Field(None, max_length=300)
     body: str | None = None
     fields: dict[str, str] | None = None
+    # The follow-up texts of this person (at most two); an empty list goes back to the campaign's follow-ups.
+    followup_bodies: list[str] | None = None
+
+    @field_validator("followup_bodies")
+    @classmethod
+    def clean_followups(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else normalize_followups(value)
 
 
 class ImportIn(BaseModel):
@@ -217,6 +245,7 @@ class ImportOut(BaseModel):
     rejected: list[RejectedRow]
     rejected_total: int
     with_own_content: int  # rows that bring their own subject and body
+    with_followups: int = 0  # rows that bring their own follow-up text
     warnings: list[str] = []
     columns: list[str]
 

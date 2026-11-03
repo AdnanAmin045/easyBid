@@ -231,3 +231,89 @@ async def test_a_follow_up_added_after_the_campaign_finished_counts_from_the_rea
     await client.post(f"/api/outreach/campaigns/{cid}/start")
     assert sum([await engine.tick(js, now=at(12 * DAY + i * 61)) for i in range(3)]) == 0  # only 2 days since the first follow-up, it needs 4
     assert sum([await engine.tick(js, now=at(15 * DAY + i * 61)) for i in range(3)]) == 2
+
+
+# --- follow-ups written in the sheet ------------------------------------------------
+
+SHEET = (
+    "email,name,company,Follow Up 1,Follow up 2\n"
+    "ann.lee@acmelabs.io,Ann Lee,Acme Labs,Ann: did you see my note about {{company}}?,Ann: last nudge.\n"
+    "bob@globex.io,Bob Stone,Globex,Bob: just checking in.,\n"
+    "carol@initech.io,Carol,Initech,,\n"
+)
+
+
+async def sheet_round(client, js, followups=None, days=None):
+    await connect_gmail(client)
+    campaign = await make_campaign(client, followups=followups or [], **({"sheet_followup_days": days} if days else {}))
+    imported = await import_text(client, campaign["id"], SHEET)
+    assert imported["with_followups"] == 2 and imported["rejected_total"] == 0, imported
+    await start(client, campaign["id"])
+    for i in range(3):
+        assert await engine.tick(js, now=at(i * 61)) == 1
+    return campaign
+
+
+async def test_sheet_follow_ups_use_the_days_set_for_the_campaign_and_the_rows_own_text(outreach, google):
+    client, js = outreach
+    campaign = await sheet_round(client, js, days=[2, 5])
+    cid = campaign["id"]
+    state = (await client.get(f"/api/outreach/campaigns/{cid}")).json()
+    assert state["sheet_followup_days"] == [2, 5] and state["followups_scheduled"] == 2 and state["status"] == "running"
+
+    assert await engine.tick(js, now=at(DAY)) == 0  # not due: 2 days
+    assert sum([await engine.tick(js, now=at(2 * DAY + 200 + i * 61)) for i in range(3)]) == 2
+    mails = sent_mail(google)[3:]
+    assert [m["To"] for m in mails] == ["ann.lee@acmelabs.io", "bob@globex.io"]
+    assert "Ann: did you see my note about Acme Labs?" in mails[0].get_content() and mails[0]["Subject"].startswith("Re: ")
+    assert "Bob: just checking in." in mails[1].get_content()
+
+    # Only Ann has a second follow-up: it counts from the first one, 5 days later.
+    assert sum([await engine.tick(js, now=at(6 * DAY + i * 61)) for i in range(3)]) == 0
+    assert sum([await engine.tick(js, now=at(7 * DAY + 400 + i * 61)) for i in range(3)]) == 1
+    assert "Ann: last nudge." in sent_mail(google)[5].get_content()
+    done = (await client.get(f"/api/outreach/campaigns/{cid}")).json()
+    assert done["status"] == "completed" and done["followups_sent"] == 3
+    states = {r["email"]: (r["status"], r["followups_sent"], r["followup_bodies"]) for r in await recipients(client, cid)}
+    assert states["carol@initech.io"] == ("sent", 0, [])
+    assert states["ann.lee@acmelabs.io"][:2] == ("sent", 2)
+
+
+async def test_a_campaign_follow_up_fills_in_for_a_row_without_its_own_text(outreach, google):
+    client, js = outreach
+    await sheet_round(client, js, followups=PLAN[:1])
+    # Everyone is due the campaign's step 1 after its 3 days, with the row's own text where there is one.
+    assert sum([await engine.tick(js, now=at(3 * DAY + 100 + i * 61)) for i in range(4)]) == 3
+    bodies = [m.get_content() for m in sent_mail(google)[3:]]
+    assert "Ann: did you see" in bodies[0] and "Bob: just checking in." in bodies[1] and "following up on my note about Initech" in bodies[2]
+
+
+async def test_sheet_follow_ups_are_validated_before_anything_is_added(outreach, google):
+    client, js = outreach
+    campaign = await make_campaign(client)
+    cid = campaign["id"]
+    text = (
+        "email,Follow-up 1,Follow-up 2\n"
+        "gap@acmelabs.io,,Only the second\n"
+        f"long@acmelabs.io,{'x' * 20001},\n"
+        "ok@acmelabs.io,Fine {{nickname}},\n"
+    )
+    res = await import_text(client, cid, text)
+    assert res["added"] == 1 and res["rejected_total"] == 2
+    reasons = {r["value"]: r["reason"] for r in res["rejected"]}
+    assert "Follow-up 1 is empty" in reasons["gap@acmelabs.io"] and "longer than" in reasons["long@acmelabs.io"]
+    assert any("nickname" in w for w in res["warnings"])
+    assert [r["email"] for r in await recipients(client, cid)] == ["ok@acmelabs.io"]
+
+    # Edits are validated the same way, and the timing is bounded.
+    rid = (await recipients(client, cid))[0]["id"]
+    assert (await client.patch(f"/api/outreach/campaigns/{cid}/recipients/{rid}", json={"followup_bodies": ["", "b"]})).status_code == 422
+    assert (await client.patch(f"/api/outreach/campaigns/{cid}/recipients/{rid}", json={"followup_bodies": ["a", "b", "c"]})).status_code == 422
+    ok = await client.patch(f"/api/outreach/campaigns/{cid}/recipients/{rid}", json={"followup_bodies": [" a ", "b", ""]})
+    assert ok.json()["followup_bodies"] == ["a", "b"]
+    for bad in ([0, 4], [3], [40, 30], [3, 61]):
+        res = await client.patch(f"/api/outreach/campaigns/{cid}", json={"sheet_followup_days": bad})
+        assert res.status_code == 422, bad
+    assert (await client.put("/api/outreach/settings", json={"default_first_followup_days": 0})).status_code == 422
+    saved = await client.put("/api/outreach/settings", json={"default_first_followup_days": 2, "default_next_followup_days": 6})
+    assert saved.status_code == 200 and saved.json()["default_next_followup_days"] == 6

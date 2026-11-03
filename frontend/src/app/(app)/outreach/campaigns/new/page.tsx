@@ -36,6 +36,7 @@ export default function NewCampaignPage() {
             timezone: settings.default_timezone,
             weekdays_only: settings.default_weekdays_only,
             ramp_up: settings.default_ramp_up,
+            sheet_followup_days: [settings.default_first_followup_days, settings.default_next_followup_days],
           }}
           submitLabel="Create campaign and add recipients"
           onSubmit={create}

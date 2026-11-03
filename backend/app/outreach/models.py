@@ -62,6 +62,9 @@ class Campaign(Base):
     # Follow-ups: [{"days": 3, "subject": "", "body": "..."}], each sent `days` after the previous email to
     # everyone who has not replied. An empty subject means "Re: <the first subject>", in the same thread.
     followups: Mapped[list] = mapped_column(JSONB, default=list)
+    # Days before the follow-ups written in the recipient sheet: [after the first email, after the first follow-up].
+    # A step of `followups` brings its own days and wins over these.
+    sheet_followup_days: Mapped[list] = mapped_column(JSONB, default=lambda: [3, 4])
 
     next_send_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -104,6 +107,9 @@ class Recipient(Base):
     # Follow-up bookkeeping. last_contact_at is the latest email of any kind and drives the limits and the delays.
     last_contact_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
     followups_sent: Mapped[int] = mapped_column(Integer, default=0)  # steps done or skipped
+    # The follow-up texts of this person's own sheet row (at most two, the last one is never empty). A step
+    # without a text here uses the campaign's follow-up of the same number.
+    followup_bodies: Mapped[list] = mapped_column(JSONB, default=list)
     followup_errors: Mapped[int] = mapped_column(Integer, default=0)
     sent_subject: Mapped[str] = mapped_column(String(300), default="")
     rfc_id: Mapped[str] = mapped_column(String(300), default="")  # Message-ID header of the latest email

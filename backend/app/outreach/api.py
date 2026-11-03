@@ -74,12 +74,10 @@ async def _counts(session: AsyncSession, campaign_id: int) -> dict[str, int]:
 
 async def _scheduled(session: AsyncSession, campaign: Campaign) -> int:
     """People written to who still have a follow-up ahead of them."""
-    if not campaign.followups:
-        return 0
     query = select(func.count()).select_from(Recipient).where(
         Recipient.campaign_id == campaign.id,
         Recipient.status == RecipientStatus.SENT,
-        Recipient.followups_sent < len(campaign.followups),
+        Recipient.followups_sent < engine.followups_due(campaign),
     )
     return await session.scalar(query) or 0
 
@@ -352,6 +350,13 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
                 with_missing += 1
                 if len(missing_examples) < 20:
                     missing_examples.append(schemas.MissingVariables(id=r.id, email=r.email, missing=missing))
+    broken_followups = 0
+    for r in pending:
+        steps = engine.followup_count(campaign, r)
+        if any(engine.compose_followup(campaign, r, i, jobs).missing for i in range(steps)):
+            broken_followups += 1
+    if broken_followups:
+        warnings.append(f"{broken_followups} recipient(s) lack a value used by their follow-up. That follow-up is skipped instead of being sent broken.")
     if with_missing:
         warnings.append(f"{with_missing} recipient(s) lack a value used by the template. They will be marked failed instead of being sent a broken email.")
 
@@ -362,6 +367,12 @@ async def _check(session: AsyncSession, js: JobServices, campaign: Campaign) -> 
     wants_cv = [i + 1 for i, f in enumerate(campaign.followups) if f.get("attach_resume")]
     if wants_cv and not campaign.resume_id:
         blockers.append(f"Follow-up {', '.join(map(str, wants_cv))} should carry the CV, but no CV is chosen for the campaign.")
+    own = sum(1 for r in pending if r.followup_bodies)
+    if own:
+        first, nxt = campaign.sheet_followup_days
+        warnings.append(
+            f"{own} recipient(s) have follow-ups written in the sheet: the first {first} day(s) after the first email, the next {nxt} day(s) after that."
+        )
     if campaign.followups:
         days = [f["days"] for f in campaign.followups]
         warnings.append(
@@ -491,6 +502,8 @@ def _rewrite_recipient(recipient: Recipient, row: importer.Row) -> int:
     merged = {**recipient.fields, **{k: v for k, v in row.fields.items() if v}}
     if merged != recipient.fields:
         recipient.fields, changed = merged, True
+    if row.followups and row.followups != recipient.followup_bodies:
+        recipient.followup_bodies, changed = row.followups, True
     # A failure caused by the old content gets another go. One that may have gone out is left for a person to check.
     unsafe = ("Outcome unknown", "stopped while sending")
     if changed and recipient.status == RecipientStatus.FAILED and not any(w in (recipient.error or "") for w in unsafe):
@@ -498,11 +511,25 @@ def _rewrite_recipient(recipient: Recipient, row: importer.Row) -> int:
     return int(changed)
 
 
+def _followup_warnings(sheet: importer.Sheet) -> list[str]:
+    """Follow-up texts that use a {{variable}} no column of the sheet provides would always come out empty."""
+    known = set(sheet.columns)
+    unknown: dict[str, int] = {}
+    for row in sheet.rows:
+        for text in row.followups:
+            for name in render.unknown_variables(text, known):
+                unknown[name] = unknown.get(name, 0) + 1
+    return [
+        f"Follow-up texts use {{{{{name}}}}} but the sheet has no such column ({count} row(s)). Those follow-ups will be skipped instead of sent broken."
+        for name, count in unknown.items()
+    ]
+
+
 def _import_warnings(sheet: importer.Sheet) -> list[str]:
     """A column full of long text that was not taken as the message is almost always a message with an unexpected name."""
+    found = _followup_warnings(sheet)
     if any(row.body for row in sheet.rows):
-        return []
-    found = []
+        return found
     for column in sheet.columns:
         cells = [row.fields[column] for row in sheet.rows if row.fields.get(column)]
         if cells and sum(len(c) for c in cells) / len(cells) > 200:
@@ -564,7 +591,7 @@ async def _add_recipients(
                 bad_domains[check.email.rsplit("@", 1)[1]] = check.reason
 
     position = (await session.scalar(select(func.max(Recipient.position)).where(Recipient.campaign_id == campaign_id))) or 0
-    held_back = with_own_content = 0
+    held_back = with_own_content = with_followups = 0
     held_emails: set[str] = set()
     for row in rows:
         position += 1
@@ -578,6 +605,7 @@ async def _add_recipients(
         if hold:
             held_emails.add(row.email)
         with_own_content += bool(row.body)
+        with_followups += bool(row.followups)
         session.add(
             Recipient(
                 campaign_id=campaign_id,
@@ -588,6 +616,7 @@ async def _add_recipients(
                 fields=row.fields,
                 subject=row.subject,
                 body=row.body,
+                followup_bodies=row.followups,
                 status=RecipientStatus.SKIPPED if hold else RecipientStatus.PENDING,
                 error=hold or None,
             )
@@ -607,6 +636,7 @@ async def _add_recipients(
         rejected=rejected[:100],
         rejected_total=len(rejected),
         with_own_content=with_own_content,
+        with_followups=with_followups,
         warnings=_import_warnings(sheet),
         columns=sheet.columns,
     )
@@ -731,8 +761,8 @@ async def preview(
             raise HTTPException(404, "Add recipients to see a preview")
     jobs = await engine.campaign_identity(session, campaign)
     if step > 0:
-        if step > len(campaign.followups):
-            raise HTTPException(404, "This campaign has no such follow-up")
+        if step > engine.followup_count(campaign, recipient):
+            raise HTTPException(404, "This recipient has no such follow-up")
         composed = engine.compose_followup(campaign, recipient, step - 1, jobs)
     else:
         composed = engine.compose(campaign, recipient, jobs)
