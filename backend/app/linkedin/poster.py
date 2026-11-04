@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 FONT_FILE = Path(__file__).resolve().parents[2] / "assets" / "fonts" / "Inter.ttf"
 W, H = 1080, 1350
 SCALE = 2
-TEMPLATES = ("points", "stat", "statement")
+TEMPLATES = ("points", "stat", "statement", "compare", "checklist")
 
 HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
@@ -30,6 +30,9 @@ class Brand:
     primary: str = "#F5F8FC"  # background
     accent: str = "#1E3A5F"
     logo: bytes | None = None
+    # "personal": a person's poster. No logo, no website, a round avatar with the name and a line about what they do.
+    style: str = "company"
+    tagline: str = ""
 
 
 def rgb(value: str, fallback: str) -> tuple[int, int, int]:
@@ -161,14 +164,22 @@ def header(img: Image.Image, draw: ImageDraw.ImageDraw, brand: Brand, kicker: st
     """Logo (or the name as a wordmark) on the left, the topic label on the right."""
     y = 70
     x = 72
-    if not logo_of(brand):
-        # No logo: the first letter in a badge and the name as a wordmark.
+    if not logo_of(brand) and brand.name.strip():
+        # No logo: the first letter in a badge and the name as a wordmark. A person gets a round avatar, a company a square one.
         mark = font(30, 800)
-        letter = (brand.name.strip()[:1] or "C").upper()
-        draw.rounded_rectangle([x * SCALE, y * SCALE, (x + 64) * SCALE, (y + 64) * SCALE], radius=16 * SCALE, fill=accent)
+        letter = brand.name.strip()[:1].upper()
+        box = [x * SCALE, y * SCALE, (x + 64) * SCALE, (y + 64) * SCALE]
+        if brand.style == "personal":
+            draw.ellipse(box, fill=accent)
+        else:
+            draw.rounded_rectangle(box, radius=16 * SCALE, fill=accent)
         on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
         draw.text(((x + 32) * SCALE, (y + 33) * SCALE), letter, font=mark, fill=on_accent, anchor="mm")
-        draw.text(((x + 82) * SCALE, (y + 33) * SCALE), brand.name, font=font(30, 700), fill=text, anchor="lm")
+        if brand.style == "personal" and brand.tagline:
+            draw.text(((x + 82) * SCALE, (y + 18) * SCALE), brand.name, font=font(28, 700), fill=text, anchor="lm")
+            draw.text(((x + 82) * SCALE, (y + 48) * SCALE), brand.tagline, font=font(21, 500), fill=muted, anchor="lm")
+        else:
+            draw.text(((x + 82) * SCALE, (y + 33) * SCALE), brand.name, font=font(30, 700), fill=text, anchor="lm")
     if kicker:
         f = font(22, 700)
         label = kicker.upper()
@@ -181,9 +192,13 @@ def header(img: Image.Image, draw: ImageDraw.ImageDraw, brand: Brand, kicker: st
 
 def footer(draw: ImageDraw.ImageDraw, brand: Brand, text, muted, accent, note: str = "") -> None:
     y = H - 84
+    # A personal poster carries no website and no company: only the person, already shown at the top, so the line stays quiet.
+    left = "" if brand.style == "personal" else (brand.website or brand.name)
+    if not left and not note:
+        return
     draw.line([72 * SCALE, (y - 28) * SCALE, (W - 72) * SCALE, (y - 28) * SCALE], fill=(*muted, 90), width=1 * SCALE)
-    left = brand.website or brand.name
-    draw.text((72 * SCALE, y * SCALE), left, font=font(26, 600), fill=text, anchor="lm")
+    if left:
+        draw.text((72 * SCALE, y * SCALE), left, font=font(26, 600), fill=text, anchor="lm")
     if note:
         draw.text(((W - 72) * SCALE, y * SCALE), note, font=font(24, 500), fill=muted, anchor="rm")
 
@@ -281,10 +296,95 @@ def render_statement(spec: dict, brand: Brand) -> Image.Image:
     return img
 
 
+def render_compare(spec: dict, brand: Brand) -> Image.Image:
+    """Two columns per row: the common approach on the left, the better one on the right."""
+    img, text, muted, accent = background(brand)
+    draw = ImageDraw.Draw(img, "RGBA")
+    header(img, draw, brand, spec.get("kicker", ""), text, muted, accent)
+    left, width = 72, W - 144
+    rows = [p for p in spec.get("points", []) if p.get("title")][:4] or [{"title": spec.get("headline", ""), "text": ""}]
+    on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+    hf, h_lines, h_size = fit(draw, spec.get("headline", ""), width, 230, range(76, 47, -2), 800, 1.1, 3)
+    y = draw_lines(draw, left, 200, h_lines, hf, text, h_size, 1.1) + 18
+    draw.rounded_rectangle([left * SCALE, y * SCALE, (left + 120) * SCALE, (y + 8) * SCALE], radius=4 * SCALE, fill=accent)
+    y += 50
+    gap, col_w = 24, (width - 24 - 56) / 2
+    # Column labels
+    lab = font(21, 700)
+    draw.text((left * SCALE, y * SCALE), "INSTEAD OF", font=lab, fill=muted, anchor="la")
+    draw.text(((left + col_w + 56 + gap / 2) * SCALE, y * SCALE), "DO THIS", font=lab, fill=accent, anchor="la")
+    y += 40
+    bottom = H - 150
+    for size in (40, 38, 36, 34, 32, 30, 28, 26):
+        f = font(size, 650)
+        built = []
+        for p in rows:
+            l_lines = wrap(draw, p["title"], f, col_w - 56)[:4]
+            r_lines = wrap(draw, p.get("text") or p["title"], f, col_w - 56)[:4]
+            h = max(len(l_lines), len(r_lines)) * size * 1.3 + 52
+            built.append((l_lines, r_lines, h))
+        total = sum(b[2] for b in built) + gap * (len(built) - 1)
+        if y + total <= bottom:
+            break
+    free = bottom - y - total
+    spacing = gap + (min(70, free / max(1, len(built) - 1)) if len(built) > 1 and free > 0 else 0)
+    for l_lines, r_lines, h in built:
+        draw.rounded_rectangle([left * SCALE, y * SCALE, (left + col_w) * SCALE, (y + h) * SCALE], radius=22 * SCALE, fill=(*text, 15), outline=(*text, 30), width=1 * SCALE)
+        rx = left + col_w + 56
+        draw.rounded_rectangle([rx * SCALE, y * SCALE, (rx + col_w) * SCALE, (y + h) * SCALE], radius=22 * SCALE, fill=accent)
+        # An arrow between the cards
+        cx, cy = left + col_w + 28, y + h / 2
+        draw.ellipse([(cx - 20) * SCALE, (cy - 20) * SCALE, (cx + 20) * SCALE, (cy + 20) * SCALE], fill=(*text, 28))
+        draw.line([(cx - 8) * SCALE, cy * SCALE, (cx + 8) * SCALE, cy * SCALE], fill=text, width=3 * SCALE)
+        draw.line([(cx + 2) * SCALE, (cy - 7) * SCALE, (cx + 9) * SCALE, cy * SCALE, (cx + 2) * SCALE, (cy + 7) * SCALE], fill=text, width=3 * SCALE)
+        draw_lines(draw, left + 28, y + 26, l_lines, f, muted, size, 1.3)
+        draw_lines(draw, rx + 28, y + 26, r_lines, f, on_accent, size, 1.3)
+        y += h + spacing
+    footer(draw, brand, text, muted, accent, spec.get("footer", ""))
+    return img
+
+
+def render_checklist(spec: dict, brand: Brand) -> Image.Image:
+    """A headline and ticked items on an open page, without boxes."""
+    img, text, muted, accent = background(brand)
+    draw = ImageDraw.Draw(img, "RGBA")
+    header(img, draw, brand, spec.get("kicker", ""), text, muted, accent)
+    left, width = 72, W - 144
+    items = [p for p in spec.get("points", []) if p.get("title")][:5] or [{"title": spec.get("headline", ""), "text": ""}]
+    on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+    bottom, top_limit = H - 150, 200
+    tf, bf = font(38, 750), font(28, 450)
+    heights = []
+    for p in items:
+        t_lines = wrap(draw, p["title"], tf, width - 100)[:2]
+        b_lines = wrap(draw, p.get("text", ""), bf, width - 100)[:2] if p.get("text") else []
+        heights.append((t_lines, b_lines, len(t_lines) * 38 * 1.2 + (len(b_lines) * 28 * 1.38 + 8 if b_lines else 0) + 44))
+    list_h = sum(h[2] for h in heights)
+    hf, h_lines, h_size = fit(draw, spec.get("headline", ""), width, max(150, bottom - list_h - 60 - top_limit), range(84, 47, -2), 800, 1.08, 4)
+    y = draw_lines(draw, left, top_limit, h_lines, hf, text, h_size, 1.08) + 24
+    free = bottom - y - list_h
+    extra = max(0, min(70, free / max(1, len(heights))))
+    for i, (t_lines, b_lines, h) in enumerate(heights):
+        cy = y + 30
+        draw.ellipse([left * SCALE, (cy - 24) * SCALE, (left + 48) * SCALE, (cy + 24) * SCALE], fill=accent)
+        pts = [(left + 13) * SCALE, (cy + 1) * SCALE, (left + 21) * SCALE, (cy + 9) * SCALE, (left + 36) * SCALE, (cy - 9) * SCALE]
+        draw.line(pts, fill=on_accent, width=5 * SCALE, joint="curve")
+        ty = draw_lines(draw, left + 76, y + 8, t_lines, tf, text, 38, 1.2)
+        if b_lines:
+            draw_lines(draw, left + 76, ty + 6, b_lines, bf, muted, 28, 1.38)
+        y += h + extra
+        if i < len(heights) - 1:
+            draw.line([left * SCALE, (y - 18 - extra / 2) * SCALE, (left + width) * SCALE, (y - 18 - extra / 2) * SCALE], fill=(*text, 30), width=1 * SCALE)
+    footer(draw, brand, text, muted, accent, spec.get("footer", ""))
+    return img
+
+
 def render_poster(spec: dict, brand: Brand) -> bytes:
     """PNG bytes of the poster described by `spec`."""
     template = spec.get("template") if spec.get("template") in TEMPLATES else "points"
-    img = {"points": render_points, "stat": render_stat, "statement": render_statement}[template](spec, brand)
+    img = {
+        "points": render_points, "stat": render_stat, "statement": render_statement, "compare": render_compare, "checklist": render_checklist,
+    }[template](spec, brand)
     img = img.resize((W, H), Image.LANCZOS)
     paste_logo(img, brand)
     out = io.BytesIO()
