@@ -516,3 +516,40 @@ async def test_recommended_settings_and_the_editable_instructions(li_client, wri
     # A week with the wrong number of rows is refused.
     s["prompts"]["personal_pillars"] = s["prompts"]["personal_pillars"][:3]
     assert (await http.put("/api/linkedin/settings", json=s)).status_code == 422
+
+
+async def test_post_times_are_validated_so_a_post_never_goes_out_before_its_draft_exists(li_client):
+    http, _ = li_client
+    s = (await http.get("/api/linkedin/overview")).json()["settings"]
+    s["generate_time"] = "12:00"
+    s["personal"].update({"enabled": True, "post_time": "10:00"})
+    refused = await http.put("/api/linkedin/settings", json=s)
+    assert refused.status_code == 422 and "10:00" in refused.json()["detail"] and "12:00" in refused.json()["detail"]
+    # The same time on a profile that is switched off is not a problem.
+    s["personal"]["enabled"] = False
+    s["company"].update({"enabled": True, "post_time": "20:30"})
+    assert (await http.put("/api/linkedin/settings", json=s)).status_code == 200
+
+    # A post time that is the middle of the night in New York is allowed but flagged: 07:00 in Karachi is 9 pm there the day before.
+    s["company"]["post_time"] = "07:00"
+    s["generate_time"] = "06:00"
+    assert (await http.put("/api/linkedin/settings", json=s)).status_code == 200
+    warnings = (await http.get("/api/linkedin/overview")).json()["warnings"]
+    assert [(w["level"], w["target"]) for w in warnings if "New York" in w["message"]] == [("warning", "company")]
+    # The recommended times raise nothing.
+    s["generate_time"], s["company"]["post_time"] = "12:00", "20:30"
+    assert (await http.put("/api/linkedin/settings", json=s)).status_code == 200
+    assert (await http.get("/api/linkedin/overview")).json()["warnings"] == []
+
+
+def test_the_personal_poster_colours_are_readable():
+    from app.linkedin.poster import contrast, readable_muted, rgb
+
+    s = engine.LinkedInSettings()
+    bg, accent, text = rgb(s.personal_primary, "#000000"), rgb(s.personal_accent, "#000000"), (248, 250, 252)
+    assert contrast(text, bg) >= 7 and contrast(readable_muted(text, bg), bg) >= 4.5 and contrast(accent, bg) >= 3
+    # Whatever colours are chosen, the small print stays readable.
+    for hexcode in ("#1E293B", "#334155", "#0B3D2E", "#FFFFFF", "#E2E8F0"):
+        base = rgb(hexcode, "#000000")
+        ink = (248, 250, 252) if sum(base) < 380 else (15, 23, 42)
+        assert contrast(readable_muted(ink, base), base) >= 4.5

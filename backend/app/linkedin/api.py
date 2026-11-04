@@ -27,6 +27,7 @@ from app.linkedin.schemas import (
     IdeasIn,
     LinkedInSettings,
     PosterSpec,
+    timing_problems,
     PostOut,
     PostPatch,
 )
@@ -105,11 +106,15 @@ async def overview(session: AsyncSession = Depends(get_session), svc: LinkedInSe
         "redirect_uri": svc.client.redirect_uri,
         "settings": s.model_dump(),
         "now_local": engine.local_now(s).isoformat(timespec="minutes"),
+        "warnings": timing_problems(s),
     }
 
 
 @router.put("/settings", response_model=LinkedInSettings)
 async def write_settings(body: LinkedInSettings, session: AsyncSession = Depends(get_session)):
+    errors = [p["message"] for p in timing_problems(body) if p["level"] == "error"]
+    if errors:
+        raise HTTPException(422, " ".join(errors))
     _, row = await engine.get_config(session)
     row.data = body.model_dump()
     store.log_event(session, "linkedin_settings", "LinkedIn settings saved")

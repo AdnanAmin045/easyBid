@@ -143,7 +143,7 @@ class LinkedInSettings(BaseModel):
     # Blank name: the name of the connected LinkedIn account.
     personal_name: str = Field("", max_length=80)
     personal_title: str = Field("Full-stack developer", max_length=60)
-    personal_primary: str = Field("#0F172A", pattern=HEX)
+    personal_primary: str = Field("#0D1117", pattern=HEX)
     personal_accent: str = Field("#F59E0B", pattern=HEX)
     # Names the writer may tag with @Name, and the LinkedIn URN each one stands for. LinkedIn only turns a name
     # into a link when it matches the page's name exactly; people cannot be tagged through the API.
@@ -272,3 +272,46 @@ class AccountOut(BaseModel):
     expires_at: datetime | None = None
     days_left: int | None = None
     problem: str = ""  # why posting from here cannot work yet
+
+
+def _minutes(clock: str) -> int:
+    h, m = clock.split(":")
+    return int(h) * 60 + int(m)
+
+
+def timing_problems(s: LinkedInSettings) -> list[dict]:
+    """Mistakes in the posting times. An "error" blocks saving; a "warning" is only shown.
+
+    The draft is written at generate_time and goes out at post_time, so post_time has to come after it, with time to read
+    the draft in between. A post that goes out while the audience is asleep is wasted, so that is flagged too.
+    """
+    found: list[dict] = []
+    tz = ZoneInfo(s.timezone)
+    today = datetime.now(tz).date()
+    generate = _minutes(s.generate_time)
+    for target, label in (("personal", "Personal profile"), ("company", "Company page")):
+        t = s.for_target(target)
+        if not t.enabled:
+            continue
+        post = _minutes(t.post_time)
+        if post <= generate:
+            found.append({
+                "level": "error", "target": target,
+                "message": f"{label}: the post time {t.post_time} is not after the time the draft is written ({s.generate_time}). "
+                f"Set the post time later, or write the draft earlier, so the draft is ready before it goes out.",
+            })
+            continue
+        if post - generate < 60 and not t.auto_approve:
+            found.append({
+                "level": "warning", "target": target,
+                "message": f"{label}: only {post - generate} minutes between the draft ({s.generate_time}) and the post ({t.post_time}), so there is little time to review it.",
+            })
+        at = datetime(today.year, today.month, today.day, post // 60, post % 60, tzinfo=tz)
+        new_york = at.astimezone(ZoneInfo("America/New_York"))
+        if new_york.hour < 7 or new_york.hour >= 20:
+            found.append({
+                "level": "warning", "target": target,
+                "message": f"{label}: {t.post_time} here is {new_york:%I:%M %p} in New York and {at.astimezone(ZoneInfo('Europe/London')):%H:%M} in London. "
+                "Most of the audience is not at work then, so the post gets little attention. Around 9 to 11 am in New York works better.",
+            })
+    return found
