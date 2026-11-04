@@ -736,6 +736,7 @@ export interface LinkedInOverview {
   redirect_uri: string;
   settings: LinkedInSettings;
   now_local: string;
+  warnings: { level: "error" | "warning"; target: LinkedInTarget; message: string }[];
 }
 
 export interface PosterPoint {

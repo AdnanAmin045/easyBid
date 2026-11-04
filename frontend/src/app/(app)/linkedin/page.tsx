@@ -542,6 +542,18 @@ function Content() {
       {connect === "connected" && <Notice tone="green">LinkedIn connected.</Notice>}
       {connect === "error" && <Notice>{params.get("message") || "LinkedIn could not be connected."}</Notice>}
       <Notice>{overview.error}</Notice>
+      {data.warnings.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {data.warnings.map((w) => (
+            <Notice key={w.message} tone={w.level === "error" ? "red" : "amber"}>
+              {w.message}{" "}
+              <a href="/linkedin/settings" className="font-medium underline">
+                Fix it in Settings
+              </a>
+            </Notice>
+          ))}
+        </div>
+      )}
       <div className="space-y-6">
         <Connections overview={data} reload={overview.reload} />
         <div role="tablist" className="flex gap-2 border-b border-stone-200">

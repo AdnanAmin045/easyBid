@@ -25,7 +25,55 @@ function Check({ label, hint, checked, onChange }: { label: string; hint?: strin
   );
 }
 
-function TargetForm({ title, subtitle, t, onChange }: { title: string; subtitle: string; t: LinkedInTargetSettings; onChange: (t: LinkedInTargetSettings) => void }) {
+const minutesOf = (clock: string) => {
+  const [h, m] = clock.split(":").map(Number);
+  return h * 60 + m;
+};
+
+/** What a clock time in `zone` is in another time zone today, as { text, hour }; null when a time zone name is not known. */
+function elsewhere(clock: string, zone: string, other: string): { text: string; hour: number } | null {
+  try {
+    const [h, m] = clock.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    const now = new Date();
+    const guess = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m);
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" })
+        .formatToParts(new Date(guess))
+        .map((p) => [p.type, p.value]),
+    );
+    const offset = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute) - guess;
+    const instant = new Date(guess - offset);
+    const text = new Intl.DateTimeFormat("en-US", { timeZone: other, hour: "numeric", minute: "2-digit" }).format(instant);
+    const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: other, hourCycle: "h23", hour: "numeric" }).format(instant));
+    return { text, hour };
+  } catch {
+    return null;
+  }
+}
+
+function TimingHint({ post, generate, zone }: { post: string; generate: string; zone: string }) {
+  if (!/^\d{1,2}:\d{2}$/.test(post) || !/^\d{1,2}:\d{2}$/.test(generate)) return null;
+  if (minutesOf(post) <= minutesOf(generate)) {
+    return (
+      <p className="text-xs font-medium text-red-700">
+        The post time ({post}) must be after the time the draft is written ({generate}), or it goes out before you can review it. This cannot be saved.
+      </p>
+    );
+  }
+  const ny = elsewhere(post, zone, "America/New_York");
+  const london = elsewhere(post, zone, "Europe/London");
+  if (!ny || !london) return null;
+  const night = ny.hour < 7 || ny.hour >= 20;
+  return (
+    <p className={`text-xs ${night ? "font-medium text-amber-800" : "text-stone-500"}`}>
+      {post} here is {ny.text} in New York and {london.text} in London.
+      {night ? " Most of your audience is not at work then; 9 to 11 am in New York works better." : " A good time to reach US and UK readers."}
+    </p>
+  );
+}
+
+function TargetForm({ title, subtitle, t, generate, zone, onChange }: { title: string; subtitle: string; t: LinkedInTargetSettings; generate: string; zone: string; onChange: (t: LinkedInTargetSettings) => void }) {
   const set = (patch: Partial<LinkedInTargetSettings>) => onChange({ ...t, ...patch });
   return (
     <Card title={title}>
@@ -64,6 +112,7 @@ function TargetForm({ title, subtitle, t, onChange }: { title: string; subtitle:
             </div>
           </Field>
         </div>
+        {t.enabled && <TimingHint post={t.post_time} generate={generate} zone={zone} />}
         <Field label="Voice" hint="Who is talking and how. The writer follows this closely.">
           <Textarea rows={3} value={t.voice} maxLength={1500} onChange={(e) => set({ voice: e.target.value })} />
         </Field>
@@ -270,9 +319,11 @@ function Form({ initial, defaults, reload }: { initial: LinkedInSettings; defaul
         title="Personal profile"
         subtitle="Informative, built to start conversations with people who buy or build software."
         t={s.personal}
+        generate={s.generate_time}
+        zone={s.timezone}
         onChange={(personal) => setS({ ...s, personal })}
       />
-      <TargetForm title="Company page" subtitle="The studio's voice: what it does, how it works, what it has learned." t={s.company} onChange={(company) => setS({ ...s, company })} />
+      <TargetForm title="Company page" subtitle="The studio's voice: what it does, how it works, what it has learned." t={s.company} generate={s.generate_time} zone={s.timezone} onChange={(company) => setS({ ...s, company })} />
       <PromptsEditor s={s} setS={setS} defaults={defaults} />
       <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center gap-3 border-t border-stone-200 bg-canvas/90 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
         <Button variant="primary" loading={busy} onClick={save}>
