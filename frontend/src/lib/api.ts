@@ -671,6 +671,30 @@ export interface LinkedInTargetSettings {
   notes: string;
 }
 
+export interface LinkedInPillar {
+  name: string;
+  instruction: string;
+}
+
+export interface LinkedInPrompts {
+  writer_style: string;
+  planner_guidance: string;
+  poster_guidance: string;
+  personal_pillars: LinkedInPillar[];
+  company_pillars: LinkedInPillar[];
+}
+
+export interface LinkedInDefaults {
+  settings: LinkedInSettings;
+  prompts: {
+    writer_style: string;
+    planner_guidance: string;
+    poster_guidance: string;
+    pillars: Record<LinkedInTarget, LinkedInPillar[]>;
+    locked_rules: string;
+  };
+}
+
 export interface LinkedInSettings {
   timezone: string;
   generate_time: string;
@@ -682,6 +706,11 @@ export interface LinkedInSettings {
   fields: string[];
   brand_primary: string;
   brand_accent: string;
+  prompts: LinkedInPrompts;
+  personal_name: string;
+  personal_title: string;
+  personal_primary: string;
+  personal_accent: string;
   mentions: Record<string, string>;
   company_page_id: string;
   draft_without_connection: boolean;
@@ -715,7 +744,7 @@ export interface PosterPoint {
 }
 
 export interface PosterSpec {
-  template: "points" | "stat" | "statement";
+  template: "points" | "stat" | "statement" | "compare" | "checklist";
   kicker: string;
   headline: string;
   points: PosterPoint[];

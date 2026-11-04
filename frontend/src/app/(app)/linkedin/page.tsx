@@ -106,12 +106,15 @@ function Connections({ overview, reload }: { overview: LinkedInOverview; reload:
 
 function PosterEditor({ spec, onChange }: { spec: PosterSpec; onChange: (s: PosterSpec) => void }) {
   const set = (patch: Partial<PosterSpec>) => onChange({ ...spec, ...patch });
+  const hasPoints = spec.template === "points" || spec.template === "checklist" || spec.template === "compare";
   return (
     <div className="space-y-3 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Layout">
           <Select value={spec.template} onChange={(e) => set({ template: e.target.value as PosterSpec["template"] })}>
-            <option value="points">Headline and points</option>
+            <option value="points">Headline and numbered points</option>
+            <option value="checklist">Headline and ticked checklist</option>
+            <option value="compare">Common way vs better way</option>
             <option value="stat">One big number</option>
             <option value="statement">One statement</option>
           </Select>
@@ -135,20 +138,30 @@ function PosterEditor({ spec, onChange }: { spec: PosterSpec; onChange: (s: Post
           </div>
         </div>
       ) : (
-        <Field label={spec.template === "points" ? "Headline" : "Statement"}>
+        <Field label={spec.template === "statement" ? "Statement" : "Headline"}>
           <Input value={spec.headline} maxLength={110} onChange={(e) => set({ headline: e.target.value })} />
         </Field>
       )}
-      {spec.template === "points" &&
+      {hasPoints &&
         spec.points.map((p, i) => (
           <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-            <Input value={p.title} maxLength={70} placeholder={`Point ${i + 1}`} onChange={(e) => set({ points: spec.points.map((q, j) => (j === i ? { ...q, title: e.target.value } : q)) })} />
-            <Input value={p.text} maxLength={140} placeholder="One line of detail" onChange={(e) => set({ points: spec.points.map((q, j) => (j === i ? { ...q, text: e.target.value } : q)) })} />
+            <Input
+              value={p.title}
+              maxLength={70}
+              placeholder={spec.template === "compare" ? "Common or wrong way" : `Point ${i + 1}`}
+              onChange={(e) => set({ points: spec.points.map((q, j) => (j === i ? { ...q, title: e.target.value } : q)) })}
+            />
+            <Input
+              value={p.text}
+              maxLength={140}
+              placeholder={spec.template === "compare" ? "The better way" : "One line of detail"}
+              onChange={(e) => set({ points: spec.points.map((q, j) => (j === i ? { ...q, text: e.target.value } : q)) })}
+            />
             <Button onClick={() => set({ points: spec.points.filter((_, j) => j !== i) })}>Remove</Button>
           </div>
         ))}
-      {spec.template === "points" && spec.points.length < 5 && <Button onClick={() => set({ points: [...spec.points, { title: "", text: "" }] })}>Add point</Button>}
-      {spec.template !== "points" && (
+      {hasPoints && spec.points.length < (spec.template === "compare" ? 4 : 5) && <Button onClick={() => set({ points: [...spec.points, { title: "", text: "" }] })}>Add row</Button>}
+      {!hasPoints && (
         <Field label="Small print under it">
           <Input value={spec.caption} maxLength={200} onChange={(e) => set({ caption: e.target.value })} />
         </Field>

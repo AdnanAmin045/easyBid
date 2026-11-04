@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Button, Card, Field, Input, Loading, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api, apiUpload, useApi, useBlobUrl, type LinkedInOverview, type LinkedInSettings, type LinkedInTargetSettings } from "@/lib/api";
+import { api, apiUpload, useApi, useBlobUrl, type LinkedInDefaults, type LinkedInOverview, type LinkedInSettings, type LinkedInTargetSettings } from "@/lib/api";
+import { PromptsEditor } from "./prompts-editor";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MODELS = [
@@ -33,7 +34,7 @@ function TargetForm({ title, subtitle, t, onChange }: { title: string; subtitle:
         <Check label="Write a post every day" checked={t.enabled} onChange={(v) => set({ enabled: v })} />
         <Check
           label="Post without asking me"
-          hint="Off: each day's post waits for you to approve it. On: it is posted at the time below as soon as it is written. Start with this off."
+          hint="Off (recommended at first): each day's post waits for you to approve it. On: the best topic is researched, written, checked and posted at the time below with nobody tapping anything. If LinkedIn is not connected or its login has expired, it stays a draft and you get a Telegram message."
           checked={t.auto_approve}
           onChange={(v) => set({ auto_approve: v })}
         />
@@ -83,7 +84,7 @@ function TargetForm({ title, subtitle, t, onChange }: { title: string; subtitle:
   );
 }
 
-function Form({ initial, reload }: { initial: LinkedInSettings; reload: () => void }) {
+function Form({ initial, defaults, reload }: { initial: LinkedInSettings; defaults: LinkedInDefaults; reload: () => void }) {
   const [s, setS] = useState(initial);
   const [mentions, setMentions] = useState(Object.entries(initial.mentions).map(([k, v]) => `${k} = ${v}`).join("\n"));
   const [busy, setBusy] = useState(false);
@@ -92,6 +93,14 @@ function Form({ initial, reload }: { initial: LinkedInSettings; reload: () => vo
   const [reading, setReading] = useState(false);
   const [siteInfo, setSiteInfo] = useState("");
   const logo = useBlobUrl("/linkedin/logo", logoVersion);
+
+  // The recommended settings, keeping what only you can know: the pages it may tag, the company page id and your name.
+  function applyRecommended() {
+    if (!confirm("Replace every setting on this page with the recommended ones? Your page id, tagged pages and name are kept. Nothing is saved until you press Save.")) return;
+    const d = defaults.settings;
+    setS({ ...d, mentions: s.mentions, company_page_id: s.company_page_id, personal_name: s.personal_name });
+    setMessage({ tone: "green", text: "Recommended settings are in the form. Press Save to keep them." });
+  }
 
   function parseMentions(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -232,6 +241,31 @@ function Form({ initial, reload }: { initial: LinkedInSettings; reload: () => vo
           </div>
         </div>
       </Card>
+      <Card title="Personal profile posters">
+        <p className="mb-4 text-sm text-stone-500">
+          Posters for your own profile look different from the company&apos;s: no logo and no website, just you. They are there to inform and start a conversation, not to advertise.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Your name on posters" hint="Leave blank to use the name of the connected LinkedIn account.">
+            <Input value={s.personal_name} maxLength={80} onChange={(e) => setS({ ...s, personal_name: e.target.value })} />
+          </Field>
+          <Field label="What you do (under your name)">
+            <Input value={s.personal_title} maxLength={60} onChange={(e) => setS({ ...s, personal_title: e.target.value })} />
+          </Field>
+          <Field label="Poster background">
+            <div className="flex items-center gap-2">
+              <input type="color" value={s.personal_primary} onChange={(e) => setS({ ...s, personal_primary: e.target.value })} className="h-9 w-12 rounded border border-stone-300" />
+              <Input value={s.personal_primary} maxLength={7} onChange={(e) => setS({ ...s, personal_primary: e.target.value })} />
+            </div>
+          </Field>
+          <Field label="Accent colour">
+            <div className="flex items-center gap-2">
+              <input type="color" value={s.personal_accent} onChange={(e) => setS({ ...s, personal_accent: e.target.value })} className="h-9 w-12 rounded border border-stone-300" />
+              <Input value={s.personal_accent} maxLength={7} onChange={(e) => setS({ ...s, personal_accent: e.target.value })} />
+            </div>
+          </Field>
+        </div>
+      </Card>
       <TargetForm
         title="Personal profile"
         subtitle="Informative, built to start conversations with people who buy or build software."
@@ -239,10 +273,12 @@ function Form({ initial, reload }: { initial: LinkedInSettings; reload: () => vo
         onChange={(personal) => setS({ ...s, personal })}
       />
       <TargetForm title="Company page" subtitle="The studio's voice: what it does, how it works, what it has learned." t={s.company} onChange={(company) => setS({ ...s, company })} />
-      <div className="flex items-center gap-3">
+      <PromptsEditor s={s} setS={setS} defaults={defaults} />
+      <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center gap-3 border-t border-stone-200 bg-canvas/90 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
         <Button variant="primary" loading={busy} onClick={save}>
           {busy ? "Saving…" : "Save settings"}
         </Button>
+        <Button onClick={applyRecommended}>Use recommended settings</Button>
         {message && <span className={`text-sm ${message.tone === "red" ? "text-red-700" : "text-emerald-700"}`}>{message.text}</span>}
       </div>
     </div>
@@ -251,11 +287,16 @@ function Form({ initial, reload }: { initial: LinkedInSettings; reload: () => vo
 
 export default function LinkedInSettingsPage() {
   const overview = useApi<LinkedInOverview>("/linkedin/overview");
+  const defaults = useApi<LinkedInDefaults>("/linkedin/settings/defaults");
   return (
     <>
-      <PageHeader title="LinkedIn settings" subtitle="How each profile sounds, when it posts and what its posters look like." />
-      <Notice>{overview.error}</Notice>
-      {overview.loading || !overview.data ? <Loading /> : <Form initial={overview.data.settings} reload={overview.reload} />}
+      <PageHeader title="LinkedIn settings" subtitle="How each profile sounds, when it posts, how topics are chosen and what its posters look like." />
+      <Notice>{overview.error || defaults.error}</Notice>
+      {overview.loading || defaults.loading || !overview.data || !defaults.data ? (
+        <Loading />
+      ) : (
+        <Form initial={overview.data.settings} defaults={defaults.data} reload={overview.reload} />
+      )}
     </>
   );
 }
