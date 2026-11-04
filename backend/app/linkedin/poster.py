@@ -53,6 +53,37 @@ def luminance(c: tuple[int, int, int]) -> float:
     return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
 
 
+def contrast(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """WCAG contrast ratio, 1 to 21. Body text needs 4.5 or more."""
+    la, lb = luminance(a), luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def readable_muted(text: tuple[int, int, int], base: tuple[int, int, int]) -> tuple[int, int, int]:
+    """The softer text colour for small print: as quiet as it can be while still passing 4.5:1 on the background."""
+    for t in (0.30, 0.25, 0.20, 0.15, 0.10, 0.05):
+        c = mix(text, base, t)
+        if contrast(c, base) >= 4.5:
+            return c
+    return text
+
+
+def personal_background(base: tuple[int, int, int], text: tuple[int, int, int], accent: tuple[int, int, int]) -> Image.Image:
+    """A flat, engineered look: a quiet gradient, a fine measuring grid and one solid accent bar. No glow, so nothing muddies the text."""
+    img = Image.new("RGB", (W * SCALE, H * SCALE), base)
+    px = ImageDraw.Draw(img)
+    lighter = mix(base, text, 0.07)
+    for y in range(0, H * SCALE, 4):
+        px.rectangle([0, y, W * SCALE, y + 4], fill=mix(lighter, base, min(1, y / (H * SCALE) * 1.6)))
+    grid = ImageDraw.Draw(img, "RGBA")
+    for i, gx in enumerate(range(0, W + 1, 54)):
+        grid.line([gx * SCALE, 0, gx * SCALE, H * SCALE], fill=(*text, 22 if i % 5 == 0 else 11), width=SCALE)
+    for i, gy in enumerate(range(0, H + 1, 54)):
+        grid.line([0, gy * SCALE, W * SCALE, gy * SCALE], fill=(*text, 22 if i % 5 == 0 else 11), width=SCALE)
+    px.rectangle([0, 0, 14 * SCALE, H * SCALE], fill=accent)
+    return img
+
+
 def font(size: float, weight: int = 400) -> ImageFont.FreeTypeFont:
     f = ImageFont.truetype(str(FONT_FILE), round(size * SCALE))
     f.set_variation_by_axes([32 if size >= 30 else 14, weight])  # optical size, weight
@@ -100,7 +131,9 @@ def background(brand: Brand) -> tuple[Image.Image, tuple, tuple, tuple]:
     accent = rgb(brand.accent, "#3B82F6")
     dark = luminance(base) < 0.4
     text = (248, 250, 252) if dark else (15, 23, 42)
-    muted = mix(text, base, 0.35 if dark else 0.4)
+    muted = readable_muted(text, base)
+    if brand.style == "personal":
+        return personal_background(base, text, accent), text, muted, accent
     top = mix(base, accent, 0.10) if dark else mix(base, (255, 255, 255), 0.0)
     img = Image.new("RGB", (W * SCALE, H * SCALE), base)
     px = ImageDraw.Draw(img)
@@ -216,7 +249,7 @@ def render_points(spec: dict, brand: Brand) -> Image.Image:
     text_x_offset = 112
     bottom = H - 150
     top_limit = 200
-    for pad_y, body_lines, body_size in ((30, 3, 28), (26, 2, 28), (22, 2, 26), (18, 2, 25)):
+    for pad_y, body_lines, body_size in ((50, 3, 31), (40, 3, 30), (30, 3, 28), (26, 2, 28), (22, 2, 26), (18, 2, 25)):
         cards = []
         for p in points:
             tf = font(36, 750)
@@ -236,7 +269,7 @@ def render_points(spec: dict, brand: Brand) -> Image.Image:
     y += 56
     # Spread the cards over the free space, but never past 34px gaps.
     free = bottom - y - cards_h
-    gap = min(34, max(card_gap, free / max(1, len(cards) - 1))) if len(cards) > 1 else 0
+    gap = min(56, max(card_gap, free / max(1, len(cards) - 1))) if len(cards) > 1 else 0
     for i, (t_lines, b_lines, h, tf, bf) in enumerate(cards):
         card = (255, 255, 255, 235) if luminance(text) < 0.5 else (*text, 15)  # white cards on a light poster
         draw.rounded_rectangle([left * SCALE, y * SCALE, (left + width) * SCALE, (y + h) * SCALE], radius=26 * SCALE, fill=card, outline=(*text, 28), width=1 * SCALE)
