@@ -52,20 +52,65 @@ class TargetSettings(BaseModel):
 
 
 def personal_defaults() -> TargetSettings:
+    """Recommended settings for the personal profile: posts at 9 am US Eastern (7 pm Pakistan), a week of different post types."""
     return TargetSettings(
-        voice="A working developer sharing what he sees in the market and what he learns building for clients. First person, practical, "
-        "a little opinionated, never salesy.",
-        audience="Founders, CTOs and operations people at small and mid-sized companies who need software built or automated.",
+        enabled=True,
+        auto_approve=False,
+        post_time="19:00",
+        voice="A working full-stack developer who builds SaaS products, web apps and AI features for clients, and writes the way he talks to a colleague. "
+        "First person ('I'), practical and specific, a little opinionated, honest about trade-offs and mistakes. Teaches before selling; never salesy, never hype.",
+        audience="Founders, CTOs, product owners and engineering leads at startups and small or mid-sized companies who are building, or about to build, "
+        "a web product, a SaaS app or an AI feature. Also developers who want practical, honest engineering advice.",
+        notes="Stay on web and software engineering, AI features, performance and delivery. No politics, religion, layoff gossip or attacks on named people "
+        "or companies. Never reveal a client's confidential details. Prefer concrete engineering detail over motivational talk. End with a real question "
+        "that a founder or engineer can answer in one line.",
         poster="auto",
     )
 
 
 def company_defaults() -> TargetSettings:
+    """Recommended settings for the company page: posts at 10:30 am US Eastern (8:30 pm Pakistan), with a booking link as the first comment."""
     return TargetSettings(
-        voice="A small, senior software studio. We use 'we'. Clear and calm, explains how the work is done, proves skill by being specific.",
-        audience="Founders and product owners at startups and small businesses looking for a development partner.",
+        enabled=True,
+        auto_approve=False,
+        post_time="20:30",
+        voice="Codevryn, a software engineering partner. We write as 'we': calm, clear and specific, a senior team explaining how good work gets done. "
+        "No hype, no buzzwords, no promises of results. Transparent and predictable, in the spirit of the website: software that holds up.",
+        audience="Founders, product owners and operations leaders at startups and growing businesses who need a reliable development partner for a web "
+        "platform, a backend or API, a cloud setup, performance work or an AI feature.",
+        first_comment="Planning a build or need a second opinion? Tell us about it: https://codevryn.com/contact",
+        notes="Cover only the services and technologies on the website. No invented client names, results or prices. No politics or gossip. Never criticise "
+        "competitors by name. End with a question or an open invitation to talk, not a hard sell.",
         poster="auto",
     )
+
+
+class Pillar(BaseModel):
+    """What one weekday's post is about."""
+
+    name: str = Field(max_length=40)
+    instruction: str = Field(max_length=800)
+
+
+class PromptSettings(BaseModel):
+    """The instructions the planner and the writer follow. Blank (or no rows) means the built-in recommended text.
+
+    The truth rules are not here: they are always added and enforced in code.
+    """
+
+    writer_style: str = Field("", max_length=6000)
+    planner_guidance: str = Field("", max_length=4000)
+    poster_guidance: str = Field("", max_length=4000)
+    # Seven rows, Monday first, or none for the recommended week.
+    personal_pillars: list[Pillar] = Field(default_factory=list, max_length=7)
+    company_pillars: list[Pillar] = Field(default_factory=list, max_length=7)
+
+    @field_validator("personal_pillars", "company_pillars")
+    @classmethod
+    def _seven(cls, v: list[Pillar]) -> list[Pillar]:
+        if v and len(v) != 7:
+            raise ValueError("A week has seven rows, Monday to Sunday")
+        return v
 
 
 class LinkedInSettings(BaseModel):
@@ -94,6 +139,12 @@ class LinkedInSettings(BaseModel):
     )
     brand_primary: str = Field("#F5F8FC", pattern=HEX)
     brand_accent: str = Field("#1E3A5F", pattern=HEX)
+    # Posters of the personal profile look different from the company's: no logo, no website, just the person.
+    # Blank name: the name of the connected LinkedIn account.
+    personal_name: str = Field("", max_length=80)
+    personal_title: str = Field("Full-stack developer", max_length=60)
+    personal_primary: str = Field("#0F172A", pattern=HEX)
+    personal_accent: str = Field("#F59E0B", pattern=HEX)
     # Names the writer may tag with @Name, and the LinkedIn URN each one stands for. LinkedIn only turns a name
     # into a link when it matches the page's name exactly; people cannot be tagged through the API.
     mentions: dict[str, str] = Field(default_factory=dict)
@@ -101,6 +152,7 @@ class LinkedInSettings(BaseModel):
     company_page_id: str = Field("", max_length=20, pattern=r"^\d*$")
     # Write the day's drafts even when the page is not connected, so they can be copied by hand.
     draft_without_connection: bool = True
+    prompts: PromptSettings = Field(default_factory=PromptSettings)
     personal: TargetSettings = Field(default_factory=personal_defaults)
     company: TargetSettings = Field(default_factory=company_defaults)
 
@@ -144,7 +196,7 @@ class PosterPoint(BaseModel):
 
 
 class PosterSpec(BaseModel):
-    template: Literal["points", "stat", "statement"] = "points"
+    template: Literal["points", "stat", "statement", "compare", "checklist"] = "points"
     kicker: str = Field("", max_length=26)
     headline: str = Field("", max_length=110)
     points: list[PosterPoint] = Field(default_factory=list, max_length=5)

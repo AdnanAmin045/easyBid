@@ -55,10 +55,21 @@ async def get_config(session: AsyncSession) -> tuple[LinkedInSettings, LinkedInC
 DEFAULT_LOGO = Path(__file__).resolve().parents[2] / "assets" / "codevryn-logo.png"
 
 
-def brand_of(s: LinkedInSettings, row: LinkedInConfig) -> Brand:
-    """The logo uploaded in the settings, or else the Codevryn logo that ships with the server."""
+def brand_of(s: LinkedInSettings, row: LinkedInConfig, target: str = COMPANY, person: str = "") -> Brand:
+    """How a poster looks. The company's: its logo (the one uploaded in the settings, else the Codevryn logo that ships with the
+    server), its website and colours. The person's: no logo and no website, their own colours, round avatar, name and what they do."""
+    if target == PERSONAL:
+        return Brand(
+            name=(s.personal_name or person).strip(), website="", primary=s.personal_primary, accent=s.personal_accent, logo=None,
+            style="personal", tagline=s.personal_title,
+        )
     logo = row.logo or (DEFAULT_LOGO.read_bytes() if DEFAULT_LOGO.exists() else None)
     return Brand(name=s.brand_name, website=s.website, primary=s.brand_primary, accent=s.brand_accent, logo=logo)
+
+
+async def brand_for(session: AsyncSession, target: str, s: LinkedInSettings, row: LinkedInConfig) -> Brand:
+    account = await session.scalar(select(LinkedInAccount).where(LinkedInAccount.target == PERSONAL)) if target == PERSONAL else None
+    return brand_of(s, row, target, account.name if account else "")
 
 
 def local_now(s: LinkedInSettings) -> datetime:
@@ -92,7 +103,7 @@ async def create_draft(
 ) -> LinkedInPost:
     """Write one post for `target` and save it. The day's first post goes out at the usual time, later ones soon after approval."""
     ts = s.for_target(target)
-    brand = brand_of(s, row)
+    brand = await brand_for(session, target, s, row)
     made = await content.generate_post(svc.llm, session, target, s, day, brief, brand)
     if slot is None:
         taken = set(await session.scalars(select(LinkedInPost.slot).where(LinkedInPost.target == target, LinkedInPost.post_date == day)))

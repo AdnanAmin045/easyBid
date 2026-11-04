@@ -116,6 +116,21 @@ def poster_problem(raw: dict, facts_text: str) -> str | None:
     return f"the poster {found}" if found else None
 
 
+def branding_problem(raw: dict, banned_words: list[str]) -> str | None:
+    """A personal poster carries no company name, no website and no link: it is there to inform, not to advertise."""
+    parts = [str(raw.get("kicker", "")), str(raw.get("headline", "")), str(raw.get("stat_label", "")), str(raw.get("caption", ""))]
+    for p in raw.get("points") or []:
+        parts += [str(p.get("title", "")), str(p.get("text", ""))]
+    joined = " ".join(parts)
+    lowered = joined.lower()
+    for word in banned_words:
+        if word.strip() and word.strip().lower() in lowered:
+            return f"the poster mentions '{word.strip()}'; a poster for the personal profile never names the company"
+    if re.search(r"https?://|www\.|[a-z0-9-]+\.(?:com|io|dev|co|net|org|ai)", lowered):
+        return "the poster contains a website or link; a poster for the personal profile has none"
+    return None
+
+
 def poster_from(raw: dict, mode: str, post: str, brand: Brand) -> dict | None:
     """The poster spec the writer asked for, cleaned up; None when there should be no poster."""
     if mode == "never":
@@ -139,7 +154,7 @@ def poster_from(raw: dict, mode: str, post: str, brand: Brand) -> dict | None:
         "caption": " ".join(str(raw.get("caption", "")).split())[:200],
         "footer": "",
     }
-    if template == "points" and (len(points) < 2 or not spec["headline"]):
+    if template in ("points", "compare", "checklist") and (len(points) < 2 or not spec["headline"]):
         template = spec["template"] = "statement"
     if template == "stat" and not (spec["stat"] and spec["stat_label"]):
         template = spec["template"] = "statement"

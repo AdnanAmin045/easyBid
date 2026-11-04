@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_env
 from app.db import get_session
 from app.jobs import gmail as crypto
-from app.linkedin import content, engine, research, site
+from app.linkedin import content, engine, prompts, research, site
 from app.linkedin import client as li
 from app.linkedin.client import LinkedInError, post_url
 from app.linkedin.engine import LinkedInServices
@@ -115,6 +115,21 @@ async def write_settings(body: LinkedInSettings, session: AsyncSession = Depends
     store.log_event(session, "linkedin_settings", "LinkedIn settings saved")
     await session.commit()
     return body
+
+
+@router.get("/settings/defaults")
+async def settings_defaults() -> dict:
+    """The recommended settings, and the built-in text of every instruction the planner and the writer follow."""
+    return {
+        "settings": LinkedInSettings().model_dump(),
+        "prompts": {
+            "writer_style": prompts.DEFAULT_WRITER_STYLE,
+            "planner_guidance": prompts.DEFAULT_PLANNER_GUIDANCE,
+            "poster_guidance": prompts.DEFAULT_POSTER_GUIDANCE,
+            "pillars": prompts.pillar_defaults(),
+            "locked_rules": prompts.LOCKED_RULES,
+        },
+    }
 
 
 @router.get("/research")
@@ -284,10 +299,11 @@ async def delete_logo(session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/poster-preview")
-async def poster_preview(spec: PosterSpec, session: AsyncSession = Depends(get_session)) -> Response:
+async def poster_preview(spec: PosterSpec, target: str = COMPANY, session: AsyncSession = Depends(get_session)) -> Response:
     s, row = await engine.get_config(session)
+    brand = await engine.brand_for(session, target, s, row)
     await session.commit()
-    return Response(render_poster(spec.model_dump(), engine.brand_of(s, row)), media_type="image/png")
+    return Response(render_poster(spec.model_dump(), brand), media_type="image/png")
 
 
 # --- posts ----------------------------------------------------------------------------
@@ -347,7 +363,7 @@ async def update_post(post_id: int, body: PostPatch, session: AsyncSession = Dep
     elif body.poster_spec is not None:
         s, row = await engine.get_config(session)
         post.poster_spec = body.poster_spec.model_dump()
-        post.poster = render_poster(post.poster_spec, engine.brand_of(s, row))
+        post.poster = render_poster(post.poster_spec, await engine.brand_for(session, post.target, s, row))
     if post.status == PostStatus.FAILED:
         post.status, post.error = PostStatus.DRAFT, ""
     await session.commit()
@@ -361,7 +377,7 @@ async def rerender(post_id: int, session: AsyncSession = Depends(get_session)):
     if post.status not in EDITABLE or not post.poster_spec:
         raise HTTPException(409, "This post has no poster that can be redrawn")
     s, row = await engine.get_config(session)
-    post.poster = render_poster(post.poster_spec, engine.brand_of(s, row))
+    post.poster = render_poster(post.poster_spec, await engine.brand_for(session, post.target, s, row))
     await session.commit()
     return out(post)
 
@@ -374,11 +390,12 @@ async def rewrite(post_id: int, body: GenerateIn, session: AsyncSession = Depend
         raise HTTPException(409, "A post that has gone out or been rejected cannot be rewritten")
     s, row = await engine.get_config(session)
     try:
-        made = await content.generate_post(svc.llm, session, post.target, s, post.post_date, body.brief, engine.brand_of(s, row))
+        brand = await engine.brand_for(session, post.target, s, row)
+        made = await content.generate_post(svc.llm, session, post.target, s, post.post_date, body.brief, brand)
     except LLMError as e:
         raise HTTPException(503, f"The writer is unavailable: {e}") from e
     post.topic, post.pillar, post.text, post.poster_spec, post.alt_text, post.signals = made.topic, made.pillar, made.text, made.poster_spec, made.alt_text, made.signals
-    post.poster = render_poster(made.poster_spec, engine.brand_of(s, row)) if made.poster_spec else None
+    post.poster = render_poster(made.poster_spec, brand) if made.poster_spec else None
     post.status, post.error = PostStatus.DRAFT, ""
     await session.commit()
     return out(post)

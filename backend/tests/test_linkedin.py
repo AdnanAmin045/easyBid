@@ -54,6 +54,8 @@ class FakeWriter:
         self.replies: list[dict] = []
         self.prompts: list[str] = []  # writer prompts
         self.plan_prompts: list[str] = []
+        self.systems: list[str] = []  # writer system prompts
+        self.plan_systems: list[str] = []
         self.searches = 0
         self.search_error: LLMError | None = None
         self.idea = {"topic": "Next.js 17 changes caching again", "angle": "What to check before upgrading", "why_now": "Next.js release notes, Vercel blog", "pillar": "Industry shift"}
@@ -71,9 +73,11 @@ class FakeWriter:
     async def complete(self, *, model, system, user, schema=None, fallbacks=()):
         if schema and "ideas" in schema["properties"]:
             self.plan_prompts.append(user)
+            self.plan_systems.append(system)
             return json.dumps({"ideas": [self.idea, {**self.idea, "topic": "Second idea"}, {**self.idea, "topic": "Third idea"}]})
         self.calls += 1
         self.prompts.append(user)
+        self.systems.append(system)
         data = self.replies.pop(0) if self.replies else {}
         return json.dumps({"topic": "Upgrading to Next.js 17", "post": GOOD_POST, "hashtags": ["#NextJS", "WebDevelopment", "#bad tag!"], "alt_text": "Three checks", "poster": POSTER, **data})
 
@@ -249,6 +253,7 @@ async def test_missing_openid_product_is_explained(li_client, linkedin):
 async def settings_for(http, **personal) -> dict:
     s = (await http.get("/api/linkedin/overview")).json()["settings"]
     s["personal"].update({"enabled": True, "auto_approve": False, "post_time": "23:59", **personal})
+    s["company"]["enabled"] = False  # the recommended settings turn both on; most tests are about one
     s["generate_time"] = "00:00"
     s["mentions"] = {"Codevryn": "urn:li:organization:42"}
     res = await http.put("/api/linkedin/settings", json=s)
@@ -381,6 +386,7 @@ async def test_an_unconnected_company_page_still_gets_a_draft_to_copy(li_client,
     http, svc = li_client
     s = (await http.get("/api/linkedin/overview")).json()["settings"]
     s["company"].update({"enabled": True, "post_time": "23:59"})
+    s["personal"]["enabled"] = False
     s["generate_time"] = "00:00"
     assert (await http.put("/api/linkedin/settings", json=s)).status_code == 200
     await engine.tick(svc)
@@ -443,3 +449,70 @@ def test_the_codevryn_logo_from_the_project_is_used_unchanged(tmp_path):
     close = sum(1 for p in region.getdata() if all(abs(p[i] - navy[i]) < 12 for i in range(3)))
     assert close > 300
     assert logo.size == (260, 60)
+
+
+def test_a_personal_poster_has_no_logo_no_website_and_no_company_name(tmp_path):
+    s = engine.LinkedInSettings(website="codevryn.com")
+    row = engine.LinkedInConfig(id=1, data={})
+    person = engine.brand_of(s, row, "personal", "Test Person")
+    company = engine.brand_of(s, row, "company")
+    assert person.logo is None and person.website == "" and person.style == "personal" and person.name == "Test Person"
+    assert person.accent != company.accent and company.logo is not None and company.website == "codevryn.com"
+    # A name typed in the settings wins over the LinkedIn account's.
+    assert engine.brand_of(engine.LinkedInSettings(personal_name="Typed Name"), row, "personal", "Account Name").name == "Typed Name"
+
+    assert "Codevryn" in checks.branding_problem({"headline": "Why Codevryn builds this way", "points": []}, ["Codevryn"])
+    assert "website" in checks.branding_problem({"headline": "See more at codevryn.com", "points": []}, [])
+    assert checks.branding_problem({"headline": "Review small pull requests", "points": [{"title": "Next.js", "text": "Ship daily"}]}, ["Codevryn"]) is None
+
+    # Both look different, and every layout draws at the feed size.
+    spec = {"template": "compare", "headline": "Better habits", "points": [{"title": "Big PRs", "text": "Small PRs"}, {"title": "Late review", "text": "Same-day review"}]}
+    sizes = set()
+    for brand in (person, company):
+        for template in ("points", "checklist", "compare", "stat", "statement"):
+            png = render_poster({**spec, "template": template, "stat": "42%", "stat_label": "of builds"}, brand)
+            sizes.add(Image.open(__import__("io").BytesIO(png)).size)
+    assert sizes == {(1080, 1350)}
+    assert render_poster(spec, person) != render_poster(spec, company)
+
+
+async def test_a_personal_poster_that_names_the_company_is_rewritten(li_client, writer):
+    http, svc = li_client
+    await connect_personal(http)
+    await settings_for(http)
+    branded = {**POSTER, "headline": "How Codevryn reviews code"}
+    writer.replies = [{"poster": branded}]
+    res = await http.post("/api/linkedin/posts/generate", json={"target": "personal"})
+    assert res.status_code == 200 and writer.calls == 2
+    assert "never names the company" in writer.prompts[1]
+
+
+async def test_recommended_settings_and_the_editable_instructions(li_client, writer):
+    http, svc = li_client
+    d = (await http.get("/api/linkedin/settings/defaults")).json()
+    assert d["settings"]["personal"]["enabled"] and d["settings"]["company"]["enabled"] and not d["settings"]["personal"]["auto_approve"]
+    assert d["settings"]["personal"]["post_time"] != d["settings"]["company"]["post_time"]
+    assert "codevryn.com/contact" in d["settings"]["company"]["first_comment"]
+    assert all(len(d["prompts"]["pillars"][t]) == 7 for t in ("personal", "company")) and "State as fact only" in d["prompts"]["locked_rules"]
+
+    await connect_personal(http)
+    s = await settings_for(http)
+    weekday = engine.local_now(engine.LinkedInSettings(**{"timezone": s["timezone"]})).weekday()
+    s["prompts"] = {
+        "writer_style": "- Open every post with the word BANANA.",
+        "planner_guidance": "- Prefer topics about bananas.",
+        "poster_guidance": "",
+        "personal_pillars": [{"name": f"Day{i}", "instruction": f"Instruction for day {i}"} for i in range(7)],
+        "company_pillars": [],
+    }
+    assert (await http.put("/api/linkedin/settings", json=s)).status_code == 200
+    post = (await http.post("/api/linkedin/posts/generate", json={"target": "personal"})).json()
+    # The owner's instructions reach the writer and the planner, the weekday's row decides the pillar...
+    assert "BANANA" in writer.systems[-1] and "bananas" in writer.plan_systems[-1]
+    assert post["pillar"] == f"Day{weekday}" and f"Instruction for day {weekday}" in writer.prompts[-1]
+    # ...and the truth rules are there whatever the instructions say, with the built-in text for what was left blank.
+    assert "State as fact only" in writer.systems[-1] and "numbered points" in writer.systems[-1]
+
+    # A week with the wrong number of rows is refused.
+    s["prompts"]["personal_pillars"] = s["prompts"]["personal_pillars"][:3]
+    assert (await http.put("/api/linkedin/settings", json=s)).status_code == 422
