@@ -56,6 +56,23 @@ class Env(BaseSettings):
     imap_host: str = "imap.hostinger.com"
     imap_port: int = 993
 
+    # LinkedIn posting. Two developer apps, because LinkedIn only gives the Community Management API (company pages)
+    # to an app that has no other product: LINKEDIN_CLIENT_ID is the app with "Share on LinkedIn" for the personal
+    # profile, LINKEDIN_ORG_CLIENT_ID the one with Community Management for the company page.
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    linkedin_org_client_id: str = ""
+    linkedin_org_client_secret: str = ""
+    # https://<backend>/api/linkedin/callback, registered in both LinkedIn apps. Blank: this server's own URL.
+    linkedin_redirect_uri: str = ""
+    linkedin_api_version: str = "202610"
+
+    @property
+    def linkedin_callback(self) -> str:
+        if self.linkedin_redirect_uri:
+            return self.linkedin_redirect_uri
+        return f"{(self.render_external_url or 'http://localhost:8000').rstrip('/')}/api/linkedin/callback"
+
     @property
     def dashboard_url(self) -> str:
         """Where the dashboard lives: APP_URL, or else the first CORS origin."""

@@ -653,3 +653,155 @@ export function deliveredCount(counts: Partial<Record<RecipientStatus, number>>)
 export function totalCount(counts: Partial<Record<RecipientStatus, number>>): number {
   return Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0);
 }
+
+// --- LinkedIn --------------------------------------------------------------------------
+
+export type LinkedInTarget = "personal" | "company";
+
+export interface LinkedInTargetSettings {
+  enabled: boolean;
+  auto_approve: boolean;
+  post_time: string;
+  days: number[];
+  voice: string;
+  about: string;
+  audience: string;
+  first_comment: string;
+  poster: "auto" | "always" | "never";
+  notes: string;
+}
+
+export interface LinkedInSettings {
+  timezone: string;
+  generate_time: string;
+  model: string;
+  fallback_models: string[];
+  brand_name: string;
+  website: string;
+  website_url: string;
+  fields: string[];
+  brand_primary: string;
+  brand_accent: string;
+  mentions: Record<string, string>;
+  company_page_id: string;
+  draft_without_connection: boolean;
+  personal: LinkedInTargetSettings;
+  company: LinkedInTargetSettings;
+}
+
+export interface LinkedInAccount {
+  target: LinkedInTarget;
+  configured: boolean;
+  connected: boolean;
+  name: string;
+  author_urn: string;
+  expires_at: string | null;
+  days_left: number | null;
+  problem: string;
+}
+
+export interface LinkedInOverview {
+  accounts: LinkedInAccount[];
+  counts: Record<string, Record<string, number>>;
+  today: Record<string, number>;
+  redirect_uri: string;
+  settings: LinkedInSettings;
+  now_local: string;
+}
+
+export interface PosterPoint {
+  title: string;
+  text: string;
+}
+
+export interface PosterSpec {
+  template: "points" | "stat" | "statement";
+  kicker: string;
+  headline: string;
+  points: PosterPoint[];
+  stat: string;
+  stat_label: string;
+  caption: string;
+  footer: string;
+}
+
+export interface LinkedInPost {
+  id: number;
+  target: LinkedInTarget;
+  post_date: string;
+  slot: number;
+  pillar: string;
+  topic: string;
+  text: string;
+  first_comment: string;
+  poster_spec: PosterSpec | null;
+  has_poster: boolean;
+  alt_text: string;
+  signals: { why_now?: string; angle?: string; sources?: { title: string; url: string }[]; via?: string };
+  status: "draft" | "approved" | "posting" | "posted" | "failed" | "rejected";
+  scheduled_for: string | null;
+  posted_at: string | null;
+  linkedin_urn: string;
+  linkedin_url: string;
+  error: string;
+  created_at: string;
+}
+
+export interface LinkedInIdea {
+  topic: string;
+  angle: string;
+  why_now: string;
+  pillar: string;
+}
+
+export interface LinkedInResearch {
+  found: boolean;
+  day?: string;
+  digest?: string;
+  sources?: { title: string; url: string }[];
+  via?: string;
+  fetched_at?: string | null;
+}
+
+/** An authenticated image (the API wants the bearer token, which an <img> tag cannot send) as an object URL. */
+export function useBlobUrl(path: string | null, version: unknown = 0): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!path) return;
+    let alive = true;
+    let made: string | null = null;
+    const token = getToken();
+    fetch(`${BASE}/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (!alive) return;
+        made = blob ? URL.createObjectURL(blob) : null;
+        setUrl(made);
+      })
+      .catch(() => alive && setUrl(null));
+    return () => {
+      alive = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [path, version]);
+  return path ? url : null;
+}
+
+export async function apiBlob(path: string, init: { method?: string; body?: unknown } = {}): Promise<Blob> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/api${path}`, {
+    method: init.method ?? "GET",
+    headers: { ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
+  if (!res.ok) throw new Error(errorMessage(await res.json().catch(() => null), res.status));
+  return res.blob();
+}
+
+export async function apiUpload(path: string, file: File): Promise<void> {
+  const token = getToken();
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/api${path}`, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
+  if (!res.ok) throw new Error(errorMessage(await res.json().catch(() => null), res.status));
+}

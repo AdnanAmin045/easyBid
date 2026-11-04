@@ -13,6 +13,9 @@ from app.jobs import api as jobs_api
 from app.jobs import accounts as job_accounts
 from app.jobs import followups as job_followups
 from app.jobs.gmail import GmailClient
+from app.linkedin import api as linkedin_api
+from app.linkedin import engine as linkedin_engine
+from app.linkedin.client import AppCredentials, LinkedInClient
 from app.outreach import api as outreach_api
 from app.outreach import engine as outreach_engine
 from app.config import get_env
@@ -27,6 +30,7 @@ logger = logging.getLogger("easybid")
 
 TICK_SECONDS = 15
 OUTREACH_TICK_SECONDS = 10
+LINKEDIN_TICK_SECONDS = 60
 KEEPALIVE_SECONDS = 300
 
 
@@ -75,6 +79,23 @@ async def outreach_loop(js: jobs_api.JobServices) -> None:
         await asyncio.sleep(min(OUTREACH_TICK_SECONDS * 2 ** min(failures, 4), 120))
 
 
+async def linkedin_loop(svc: linkedin_engine.LinkedInServices) -> None:
+    """Writes the day's LinkedIn posts and publishes the approved ones that are due."""
+    failures = 0
+    while True:
+        try:
+            await linkedin_engine.tick(svc)
+            failures = 0
+        except (OperationalError, DBAPIError, OSError, TimeoutError) as e:
+            failures += 1
+            if failures == 1 or failures % 10 == 0:
+                logger.warning("LinkedIn: database unreachable (%s), retrying with a longer wait", type(e).__name__)
+        except Exception:
+            failures += 1
+            logger.exception("LinkedIn tick failed")
+        await asyncio.sleep(min(LINKEDIN_TICK_SECONDS * 2 ** min(failures, 3), 600))
+
+
 async def keepalive_loop(url: str) -> None:
     """Render's free plan stops a service after 15 minutes without incoming requests, and polling stops with it.
 
@@ -104,6 +125,17 @@ async def lifespan(app: FastAPI):
         gmail=GmailClient(env.google_client_id, env.google_client_secret, env.google_redirect_uri),
         notifier=app.state.services.notifier,
     )
+    app.state.linkedin = linkedin_engine.LinkedInServices(
+        sessions=SessionLocal,
+        llm=app.state.services.llm,
+        client=LinkedInClient(
+            AppCredentials(env.linkedin_client_id, env.linkedin_client_secret),
+            AppCredentials(env.linkedin_org_client_id, env.linkedin_org_client_secret),
+            env.linkedin_callback,
+            env.linkedin_api_version,
+        ),
+        notifier=app.state.services.notifier,
+    )
     async with SessionLocal() as session:
         await job_accounts.sync_env_smtp(session, env)
         await session.commit()
@@ -111,6 +143,7 @@ async def lifespan(app: FastAPI):
     # With EMBEDDED_SCHEDULER=false the arq worker polls, and this loop only steps in if the worker goes quiet.
     tasks = [asyncio.create_task(scheduler_loop(app.state.services, standby=not env.embedded_scheduler))]
     tasks.append(asyncio.create_task(outreach_loop(app.state.jobs)))
+    tasks.append(asyncio.create_task(linkedin_loop(app.state.linkedin)))
     if env.render_external_url:
         tasks.append(asyncio.create_task(keepalive_loop(env.render_external_url)))
     yield
@@ -118,6 +151,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
     await app.state.services.freelancer.close()
     await app.state.jobs.gmail.close()
+    await app.state.linkedin.client.close()
 
 
 app = FastAPI(title="EasyBid API", lifespan=lifespan)
@@ -132,3 +166,6 @@ app.include_router(router)
 app.include_router(jobs_api.public)
 app.include_router(jobs_api.router)
 app.include_router(outreach_api.router)
+app.include_router(linkedin_api.public)
+app.include_router(linkedin_api.alias)
+app.include_router(linkedin_api.router)

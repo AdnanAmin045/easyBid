@@ -252,11 +252,13 @@ class LLM:
             model_chain(s.proposal_model, s.proposal_fallback_models)
         )
 
-    async def complete(self, *, model: str, system: str, user: str, schema: dict | None = None) -> str:
-        """One request, one answer: text, or JSON matching `schema`."""
+    async def complete(
+        self, *, model: str, system: str, user: str, schema: dict | None = None, fallbacks: list[str] | tuple[str, ...] = ()
+    ) -> str:
+        """One request, one answer: text, or JSON matching `schema`. `fallbacks` answer when `model` is out of quota."""
         messages = [{"role": "user", "content": user}]
         return await self._complete_chain(
-            [model], system=system, messages=messages, effort="medium", max_tokens=16000, schema=schema
+            model_chain(model, list(fallbacks)), system=system, messages=messages, effort="medium", max_tokens=16000, schema=schema
         )
 
     def slots(self, chain: list[str]) -> list[tuple[str, int]]:
@@ -280,6 +282,38 @@ class LLM:
     def _rest_names(model: str, key: int) -> list[str]:
         return [f"{model}#{key}", f"key#{key}", f"model#{model}"] if provider_of(model) == "gemini" else [f"{model}#{key}"]
 
+    def _rest(self, e: "LLMError", model: str, key: int) -> None:
+        """Remember that this model, key or model name should not be asked again for a while."""
+        rest, name = e.rest or MODEL_REST, f"{model}#{key}"
+        if e.skip == "key":
+            rest, name = KEY_REST, f"key#{key}"
+        elif e.skip == "model":
+            rest, name = MISSING_MODEL_REST, f"model#{model}"
+        self._resting[name] = datetime.now(timezone.utc) + rest
+        label = f"{model} on Gemini key {key + 1}" if provider_of(model) == "gemini" else model
+        logger.info("%s unavailable, resting it for %s: %s", label, str(rest).split(".")[0], e)
+
+    async def search(self, *, model: str, system: str, user: str) -> tuple[str, list[dict]]:
+        """Answer with Google Search grounding (Gemini only): returns the text and the pages it was based on.
+
+        Any failure moves on to the next model or key, because a model that cannot search is not the request's fault.
+        """
+        last: LLMError | None = None
+        for name, key in self.slots([model]):
+            now = datetime.now(timezone.utc)
+            if provider_of(name) != "gemini" or self.model_problem(name) or any(self._resting.get(r, now) > now for r in self._rest_names(name, key)):
+                continue
+            try:
+                return await self._gemini_generate(
+                    model=name, key=key, system=system, messages=[{"role": "user", "content": user}], schema=None, search=True
+                )
+            except LLMError as e:
+                if not (e.transient or e.skip):
+                    e = LLMError(str(e), skip="model")  # e.g. this model has no search tool
+                self._rest(e, name, key)
+                last = e
+        raise LLMError(f"Google Search through Gemini is unavailable{f' (last: {last})' if last else ''}", transient=True)
+
     async def _complete_chain(self, chain: list[str], **kwargs) -> str:
         """Ask each usable model in turn until one answers.
 
@@ -296,14 +330,7 @@ class LLM:
             except LLMError as e:
                 if not (e.transient or e.skip):
                     raise
-                rest, name = e.rest or MODEL_REST, f"{model}#{key}"
-                if e.skip == "key":
-                    rest, name = KEY_REST, f"key#{key}"
-                elif e.skip == "model":
-                    rest, name = MISSING_MODEL_REST, f"model#{model}"
-                self._resting[name] = datetime.now(timezone.utc) + rest
-                label = f"{model} on Gemini key {key + 1}" if provider_of(model) == "gemini" else model
-                logger.info("%s unavailable, resting it for %s: %s", label, str(rest).split(".")[0], e)
+                self._rest(e, model, key)
                 last = e
         detail = f" (last: {last})" if last else ""
         raise LLMError(f"every AI model in the chain is out of quota or busy{detail}", transient=True)
@@ -346,15 +373,17 @@ class LLM:
             raise LLMError("The model returned no text")
         return text
 
-    async def _complete_gemini(
-        self, *, model: str, key: int, system: str, messages: list[dict], schema: dict | None
-    ) -> str:
+    async def _gemini_generate(
+        self, *, model: str, key: int, system: str, messages: list[dict], schema: dict | None, search: bool = False
+    ) -> tuple[str, list[dict]]:
         if key >= len(self._gemini):
             raise LLMError("GEMINI_API_KEY is not set")
         config = genai_types.GenerateContentConfig(
             system_instruction=system,
             automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
         )
+        if search:
+            config.tools = [genai_types.Tool(google_search=genai_types.GoogleSearch())]
         if schema:
             config.response_mime_type = "application/json"
             config.response_json_schema = schema
@@ -373,7 +402,20 @@ class LLM:
         text = (response.text or "").strip()
         if not text:
             raise LLMError("The model returned no text")
-        return text
+        sources: list[dict] = []
+        if search:
+            try:
+                for chunk in response.candidates[0].grounding_metadata.grounding_chunks or []:
+                    if chunk.web and chunk.web.uri:
+                        sources.append({"title": chunk.web.title or "", "url": chunk.web.uri})
+            except (AttributeError, IndexError, TypeError):
+                pass
+        return text, sources
+
+    async def _complete_gemini(
+        self, *, model: str, key: int, system: str, messages: list[dict], schema: dict | None
+    ) -> str:
+        return (await self._gemini_generate(model=model, key=key, system=system, messages=messages, schema=schema))[0]
 
     async def _complete(
         self,

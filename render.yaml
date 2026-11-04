@@ -65,6 +65,15 @@ services:
         value: "993"
       - key: EMBEDDED_SCHEDULER
         value: "false"
+      # LinkedIn posting (runs in this service). Register <this service URL>/api/linkedin/callback in both LinkedIn apps.
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+      - key: LINKEDIN_ORG_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_ORG_CLIENT_SECRET
+        sync: false
 
   - type: worker
     name: easybid-worker

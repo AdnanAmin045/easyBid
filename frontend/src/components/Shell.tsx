@@ -50,6 +50,15 @@ const MODULES: { key: string; label: string; tag: string; items: NavItem[] }[] =
       { href: "/outreach/suppressions", label: "Do not contact" },
     ],
   },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    tag: "LI",
+    items: [
+      { href: "/linkedin", label: "Posts" },
+      { href: "/linkedin/settings", label: "Settings" },
+    ],
+  },
   { key: "system", label: "System", tag: "SY", items: [
       { href: "/email-settings", label: "Email settings" },
       { href: "/logs", label: "Activity log" },
@@ -59,7 +68,7 @@ const MODULES: { key: string; label: string; tag: string; items: NavItem[] }[] =
 const FREELANCE_ROOTS = ["/queue", "/projects", "/bids", "/prompts", "/profile", "/settings"];
 
 function isActive(href: string, pathname: string): boolean {
-  if (href === "/" || href === "/jobs" || href === "/outreach") return pathname === href;
+  if (href === "/" || href === "/jobs" || href === "/outreach" || href === "/linkedin") return pathname === href;
   // "New campaign" lives under /outreach/campaigns, so the list must not light up for it.
   if (href === "/outreach/campaigns") return pathname === href || (pathname.startsWith(`${href}/`) && !pathname.startsWith(`${href}/new`));
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -69,6 +78,7 @@ function currentModule(pathname: string) {
   const byKey = (key: string) => MODULES.find((m) => m.key === key)!;
   if (pathname.startsWith("/jobs")) return byKey("jobs");
   if (pathname.startsWith("/outreach")) return byKey("outreach");
+  if (pathname.startsWith("/linkedin")) return byKey("linkedin");
   if (pathname === "/" || FREELANCE_ROOTS.some((root) => pathname.startsWith(root))) return byKey("freelance");
   return byKey("system");
 }
