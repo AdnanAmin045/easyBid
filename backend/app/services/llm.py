@@ -190,7 +190,9 @@ def gemini_error(e: genai_errors.APIError) -> LLMError:
             rest = timedelta(seconds=max(float(found.group(1)) + 1, 5))
         else:
             rest = None
-        return LLMError(message, transient=True, rest=rest)
+        # Google's own text is several lines of links and metric names; the log only needs to say what happened.
+        kind = "daily quota used up" if "PerDay" in detail else "quota or rate limit reached"
+        return LLMError(f"Gemini API error 429: {kind}", transient=True, rest=rest)
     if e.code in (401, 403) or (e.code == 400 and ("API_KEY_INVALID" in detail or "API key" in detail)):
         return LLMError(message, skip="key")
     if e.code == 404:
