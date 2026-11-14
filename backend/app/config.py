@@ -30,6 +30,8 @@ class Env(BaseSettings):
     groq_api_key: str = ""
     cerebras_api_key: str = ""
     mistral_api_key: str = ""
+    deepseek_api_key: str = ""
+    openai_api_key: str = ""
 
     admin_email: str = ""
     admin_password: str = ""

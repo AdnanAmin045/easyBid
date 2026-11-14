@@ -45,6 +45,8 @@ def build_services() -> Services:
             groq_key=env.groq_api_key,
             cerebras_key=env.cerebras_api_key,
             mistral_key=env.mistral_api_key,
+            deepseek_key=env.deepseek_api_key,
+            openai_key=env.openai_api_key,
         ),
         notifier=Notifier(env.telegram_bot_token, env.telegram_chat_id),
     )

@@ -24,7 +24,7 @@ def test_each_key_climbs_the_whole_ladder_before_the_next_key():
         *[(m, key) for key in range(3) for m in gemini],
         ("groq/llama-3.3-70b-versatile", 0),
     ]
-    assert GEMINI_LADDER[-1] == "gemini-pro-latest"  # the best model is last
+    assert "gemini-pro-latest" not in GEMINI_LADDER  # free keys have no quota for it
 
 
 async def test_quota_runs_through_every_model_then_moves_to_the_next_key():

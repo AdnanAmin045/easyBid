@@ -86,3 +86,43 @@ async def test_openai_style_providers():
     with pytest.raises(LLMError) as e:
         await llm._complete(model="cerebras/busy-model", system="", messages=[], effort="low", max_tokens=10)
     assert e.value.transient
+
+
+async def test_every_keyed_provider_is_tried_after_the_chosen_models():
+    llm = LLM("", "", groq_key="g", deepseek_key="d", openai_key="o")
+    calls = []
+
+    async def fake_complete(*, model, **kwargs):
+        calls.append(model)
+        if model != "openai/gpt-5-nano":
+            raise LLMError("429", transient=True)
+        return "ok"
+
+    llm._complete = fake_complete
+    assert await llm._complete_chain(["groq/llama-3.3-70b-versatile"], system="", messages=[]) == "ok"
+    assert calls == ["groq/llama-3.3-70b-versatile", "groq/openai/gpt-oss-120b", "deepseek/deepseek-flash", "openai/gpt-5-nano"]
+
+
+async def test_openai_uses_max_completion_tokens_and_a_bad_key_rests_instead_of_stopping():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(401, json={"error": "bad key"})
+
+    llm = LLM("", "", openai_key="o")
+    llm._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError) as e:
+        await llm._complete(model="openai/gpt-5-nano", system="", messages=[], effort="low", max_tokens=10)
+    assert e.value.transient and "max_completion_tokens" in seen["body"] and "max_tokens" not in seen["body"]
+
+
+async def test_a_rate_limit_message_with_a_wait_rests_the_model_only_that_long():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": {"message": "Rate limit reached. Please try again in 1m2.5s."}})
+
+    llm = LLM("", "", groq_key="g")
+    llm._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError) as e:
+        await llm._complete(model="groq/x", system="", messages=[], effort="low", max_tokens=10)
+    assert e.value.transient and e.value.rest.total_seconds() == 63.5

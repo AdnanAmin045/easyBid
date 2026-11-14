@@ -24,15 +24,29 @@ OPENAI_STYLE = {
     "groq": "https://api.groq.com/openai/v1",
     "cerebras": "https://api.cerebras.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "openai": "https://api.openai.com/v1",
 }
+# After the models chosen in Settings, every one of these whose API key is set is tried too (free ones first),
+# so the chain keeps going through every provider you have a key for before the project is put off for later.
+AUTO_FALLBACKS = (
+    "groq/openai/gpt-oss-120b",
+    "mistral/mistral-small-latest",
+    "deepseek/deepseek-flash",
+    "openai/gpt-5-nano",
+)
 # A model that ran out of quota or was overloaded is skipped this long; the next model in the chain answers instead.
 MODEL_REST = timedelta(minutes=10)
 # A Gemini key Google rejects, and a model name it does not know, are skipped this long.
 KEY_REST = timedelta(hours=1)
 MISSING_MODEL_REST = timedelta(hours=6)
 # Every Gemini key climbs this ladder after the Gemini models chosen in Settings: the free-tier
-# workhorses first, the best model last. Only when a key has used up all of them does the next key start.
-GEMINI_LADDER = ("gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-flash-latest", "gemini-pro-latest")
+# workhorses first. Only when a key has used up all of them does the next key start.
+# gemini-pro-latest is not on it: free keys have a limit of 0 for it, so it only ever answers 429.
+# It still works when chosen in Settings, for keys with billing.
+GEMINI_LADDER = ("gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-flash-latest")
+# Groq and OpenAI say "Please try again in 16.035s" (or 1m2s) in a rate-limit message.
+TRY_AGAIN_IN = re.compile(r"try again in (?:(\d+)m)?(\d+(?:\.\d+)?)s", re.I)
 RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
 
 logger = logging.getLogger("easybid")
@@ -323,6 +337,7 @@ class LLM:
         or model. Any other error, such as a refusal, is the request's fault and is raised straight away.
         """
         last: LLMError | None = None
+        chain = [*chain, *(m for m in AUTO_FALLBACKS if m not in chain and not self.model_problem(m))]
         for model, key in self.slots(chain):
             now = datetime.now(timezone.utc)
             if self.model_problem(model) or any(self._resting.get(r, now) > now for r in self._rest_names(model, key)):
@@ -350,8 +365,9 @@ class LLM:
         body: dict = {
             "model": name,
             "messages": [{"role": "system", "content": system}, *messages],
-            "max_tokens": min(max_tokens, 8000),
         }
+        # OpenAI's newer models reject max_tokens.
+        body["max_completion_tokens" if provider == "openai" else "max_tokens"] = min(max_tokens, 8000)
         if schema:
             body["response_format"] = {"type": "json_object"}
         try:
@@ -361,9 +377,16 @@ class LLM:
         except httpx.HTTPError as e:
             raise LLMError(f"Could not reach {provider}: {e!r}", transient=True) from e
         if res.status_code >= 400:
-            raise LLMError(
-                f"{provider} API error {res.status_code}: {res.text[:300]}", res.status_code in TRANSIENT_STATUSES
-            )
+            message = f"{provider} API error {res.status_code}: {res.text[:300]}"
+            # A bad key, an empty balance or an unknown model name is not the request's fault: rest it and go on.
+            if res.status_code in (401, 402, 403):
+                raise LLMError(message, transient=True, rest=KEY_REST)
+            if res.status_code == 404:
+                raise LLMError(message, transient=True, rest=MISSING_MODEL_REST)
+            rest = None
+            if res.status_code == 429 and (found := TRY_AGAIN_IN.search(res.text)):
+                rest = timedelta(seconds=min(int(found.group(1) or 0) * 60 + float(found.group(2)) + 1, 600))
+            raise LLMError(message, res.status_code in TRANSIENT_STATUSES, rest=rest)
         try:
             choice = res.json()["choices"][0]
         except (ValueError, KeyError, IndexError) as e:
