@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -37,6 +38,9 @@ AUTO_FALLBACKS = (
 )
 # A model that ran out of quota or was overloaded is skipped this long; the next model in the chain answers instead.
 MODEL_REST = timedelta(minutes=10)
+# When every model is resting but one wakes up within this many seconds, wait for it (up to MAX_WAITS times).
+MAX_WAIT_SECONDS = 45
+MAX_WAITS = 3
 # A Gemini key Google rejects, and a model name it does not know, are skipped this long.
 KEY_REST = timedelta(hours=1)
 MISSING_MODEL_REST = timedelta(hours=6)
@@ -330,6 +334,18 @@ class LLM:
                 last = e
         raise LLMError(f"Google Search through Gemini is unavailable{f' (last: {last})' if last else ''}", transient=True)
 
+    def _shortest_wait(self, chain: list[str]) -> float | None:
+        """Seconds until the first usable model wakes up, if that is soon enough to wait for."""
+        now = datetime.now(timezone.utc)
+        waits = []
+        for model, key in self.slots(chain):
+            if self.model_problem(model):
+                continue
+            wakes = [self._resting[r] for r in self._rest_names(model, key) if r in self._resting and self._resting[r] > now]
+            if wakes:
+                waits.append((max(wakes) - now).total_seconds())
+        return min(waits) + 0.5 if waits and min(waits) <= MAX_WAIT_SECONDS else None
+
     async def _complete_chain(self, chain: list[str], **kwargs) -> str:
         """Ask each usable model in turn until one answers.
 
@@ -338,17 +354,23 @@ class LLM:
         """
         last: LLMError | None = None
         chain = [*chain, *(m for m in AUTO_FALLBACKS if m not in chain and not self.model_problem(m))]
-        for model, key in self.slots(chain):
-            now = datetime.now(timezone.utc)
-            if self.model_problem(model) or any(self._resting.get(r, now) > now for r in self._rest_names(model, key)):
+        for attempt in range(MAX_WAITS + 1):
+            for model, key in self.slots(chain):
+                now = datetime.now(timezone.utc)
+                if self.model_problem(model) or any(self._resting.get(r, now) > now for r in self._rest_names(model, key)):
+                    continue
+                try:
+                    return await self._complete(model=model, key=key, **kwargs)
+                except LLMError as e:
+                    if not (e.transient or e.skip):
+                        raise
+                    self._rest(e, model, key)
+                    last = e
+            # Everything is resting. A rate limit of a few seconds (Groq's tokens per minute) is worth waiting out.
+            if attempt < MAX_WAITS and (wait := self._shortest_wait(chain)) is not None:
+                await asyncio.sleep(wait)
                 continue
-            try:
-                return await self._complete(model=model, key=key, **kwargs)
-            except LLMError as e:
-                if not (e.transient or e.skip):
-                    raise
-                self._rest(e, model, key)
-                last = e
+            break
         detail = f" (last: {last})" if last else ""
         raise LLMError(f"every AI model in the chain is out of quota or busy{detail}", transient=True)
 

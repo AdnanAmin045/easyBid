@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -126,3 +127,23 @@ async def test_a_rate_limit_message_with_a_wait_rests_the_model_only_that_long()
     with pytest.raises(LLMError) as e:
         await llm._complete(model="groq/x", system="", messages=[], effort="low", max_tokens=10)
     assert e.value.transient and e.value.rest.total_seconds() == 63.5
+
+
+async def test_a_short_rate_limit_is_waited_out_instead_of_failing(monkeypatch):
+    llm = LLM("", "", groq_key="g")
+    calls, slept = [], []
+
+    async def fake_complete(*, model, **kwargs):
+        calls.append(model)
+        if len(calls) == 1:
+            raise LLMError("429 try again in 7s", transient=True, rest=timedelta(seconds=7))
+        return "written"
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        llm._resting.clear()  # time passes
+
+    llm._complete = fake_complete
+    monkeypatch.setattr("app.services.llm.asyncio.sleep", fake_sleep)
+    assert await llm._complete_chain(["groq/openai/gpt-oss-120b"], system="", messages=[]) == "written"
+    assert len(slept) == 1 and 6 < slept[0] < 8
