@@ -207,6 +207,21 @@ def test_posters_are_drawn_in_the_feed_size_with_and_without_a_logo(tmp_path):
             assert Image.open(__import__("io").BytesIO(png)).size == (1080, 1350)
 
 
+def test_personal_posters_vary_in_colour_but_stay_readable_and_the_company_keeps_its_brand():
+    from app.linkedin import poster as pz
+
+    for bg, accent in pz.PERSONAL_THEMES:
+        base, acc = pz.rgb(bg, bg), pz.rgb(accent, accent)
+        text = (248, 250, 252) if pz.luminance(base) < 0.4 else (15, 23, 42)
+        assert pz.contrast(text, base) >= 7
+        assert pz.contrast(pz.readable_muted(text, base), base) >= 4.5
+        assert pz.contrast(acc, base) >= 4.5
+        assert pz.contrast(pz.on_color(acc), acc) >= 4.5
+    specs = [{"template": "points", "headline": f"Headline number {i}"} for i in range(30)]
+    assert len({pz.personal_theme(s) for s in specs}) > 5
+    assert pz.personal_theme(specs[0]) == pz.personal_theme(dict(specs[0]))  # redrawing a post keeps its look
+
+
 def test_a_poster_the_writer_cannot_fill_falls_back_to_one_that_works():
     brand = Brand()
     thin = {"needed": True, "template": "points", "headline": "Only a headline", "points": [{"title": "One", "text": ""}]}

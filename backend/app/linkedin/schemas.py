@@ -122,7 +122,7 @@ class LinkedInSettings(BaseModel):
     model: str = "gemini-3.5-flash"
     # Tried in order when the model above is out of free quota. A model whose API key is not set is skipped,
     # so adding GROQ_API_KEY (free) is all it takes to make "groq/..." work.
-    fallback_models: list[str] = Field(default_factory=lambda: ["groq/llama-3.3-70b-versatile"], max_length=4)
+    fallback_models: list[str] = Field(default_factory=lambda: ["groq/openai/gpt-oss-120b"], max_length=4)
     brand_name: str = Field("Codevryn", max_length=60)
     website: str = Field("", max_length=120)
     # Read for what the company does and offers: company posts may state anything that is on it.

@@ -10,7 +10,8 @@ Drawn at twice the size and scaled down, which keeps the edges of shapes smooth.
 
 import io
 import re
-from dataclasses import dataclass
+import zlib
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -59,6 +60,12 @@ def contrast(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
 
+def on_color(fill: tuple[int, int, int]) -> tuple[int, int, int]:
+    """White or near-black text, whichever reads better on `fill`."""
+    white, ink = (255, 255, 255), (15, 23, 42)
+    return white if contrast(white, fill) >= contrast(ink, fill) else ink
+
+
 def readable_muted(text: tuple[int, int, int], base: tuple[int, int, int]) -> tuple[int, int, int]:
     """The softer text colour for small print: as quiet as it can be while still passing 4.5:1 on the background."""
     for t in (0.30, 0.25, 0.20, 0.15, 0.10, 0.05):
@@ -66,6 +73,32 @@ def readable_muted(text: tuple[int, int, int], base: tuple[int, int, int]) -> tu
         if contrast(c, base) >= 4.5:
             return c
     return text
+
+
+# (background, accent) pairs for a person's posters, each checked for readable contrast (see tests). A company keeps its brand colours;
+# a person's posters rotate through these so the feed does not show the same colours every day.
+PERSONAL_THEMES: tuple[tuple[str, str], ...] = (
+    ("#0B1220", "#38BDF8"),  # midnight blue, sky
+    ("#0E1A14", "#4ADE80"),  # forest, green
+    ("#1A1033", "#C4B5FD"),  # indigo, lavender
+    ("#1F1410", "#FB923C"),  # espresso, orange
+    ("#190F1C", "#F472B6"),  # plum, pink
+    ("#0D1117", "#FBBF24"),  # graphite, amber
+    ("#06201F", "#2DD4BF"),  # deep teal, mint
+    ("#FFF7ED", "#C2410C"),  # cream, burnt orange
+    ("#F0F9FF", "#0369A1"),  # ice, ocean blue
+    ("#F5F3FF", "#6D28D9"),  # lilac, violet
+    ("#F0FDF4", "#15803D"),  # mint, green
+    ("#FFF1F2", "#BE123C"),  # blush, crimson
+    ("#FEFCE8", "#A16207"),  # butter, gold
+)
+
+
+def personal_theme(spec: dict) -> tuple[str, str]:
+    """The colours for one personal poster. Picked from what the poster says, so the same post always looks the same
+    when it is redrawn, while different posts get different colours."""
+    key = f"{spec.get('template', '')}|{spec.get('headline', '')}|{spec.get('stat', '')}".encode()
+    return PERSONAL_THEMES[zlib.crc32(key) % len(PERSONAL_THEMES)]
 
 
 def personal_background(base: tuple[int, int, int], text: tuple[int, int, int], accent: tuple[int, int, int]) -> Image.Image:
@@ -206,7 +239,7 @@ def header(img: Image.Image, draw: ImageDraw.ImageDraw, brand: Brand, kicker: st
             draw.ellipse(box, fill=accent)
         else:
             draw.rounded_rectangle(box, radius=16 * SCALE, fill=accent)
-        on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+        on_accent = on_color(accent)
         draw.text(((x + 32) * SCALE, (y + 33) * SCALE), letter, font=mark, fill=on_accent, anchor="mm")
         if brand.style == "personal" and brand.tagline:
             draw.text(((x + 82) * SCALE, (y + 18) * SCALE), brand.name, font=font(28, 700), fill=text, anchor="lm")
@@ -275,7 +308,7 @@ def render_points(spec: dict, brand: Brand) -> Image.Image:
         draw.rounded_rectangle([left * SCALE, y * SCALE, (left + width) * SCALE, (y + h) * SCALE], radius=26 * SCALE, fill=card, outline=(*text, 28), width=1 * SCALE)
         cy = y + h / 2
         draw.ellipse([(left + 30) * SCALE, (cy - 30) * SCALE, (left + 90) * SCALE, (cy + 30) * SCALE], fill=accent)
-        on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+        on_accent = on_color(accent)
         draw.text(((left + 60) * SCALE, (cy + 1) * SCALE), str(i + 1), font=font(32, 800), fill=on_accent, anchor="mm")
         ty = y + pad_y
         ty = draw_lines(draw, left + text_x_offset, ty, t_lines, tf, text, 36, 1.2)
@@ -336,7 +369,7 @@ def render_compare(spec: dict, brand: Brand) -> Image.Image:
     header(img, draw, brand, spec.get("kicker", ""), text, muted, accent)
     left, width = 72, W - 144
     rows = [p for p in spec.get("points", []) if p.get("title")][:4] or [{"title": spec.get("headline", ""), "text": ""}]
-    on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+    on_accent = on_color(accent)
     hf, h_lines, h_size = fit(draw, spec.get("headline", ""), width, 230, range(76, 47, -2), 800, 1.1, 3)
     y = draw_lines(draw, left, 200, h_lines, hf, text, h_size, 1.1) + 18
     draw.rounded_rectangle([left * SCALE, y * SCALE, (left + 120) * SCALE, (y + 8) * SCALE], radius=4 * SCALE, fill=accent)
@@ -384,7 +417,7 @@ def render_checklist(spec: dict, brand: Brand) -> Image.Image:
     header(img, draw, brand, spec.get("kicker", ""), text, muted, accent)
     left, width = 72, W - 144
     items = [p for p in spec.get("points", []) if p.get("title")][:5] or [{"title": spec.get("headline", ""), "text": ""}]
-    on_accent = (255, 255, 255) if luminance(accent) < 0.45 else (15, 23, 42)
+    on_accent = on_color(accent)
     bottom, top_limit = H - 150, 200
     tf, bf = font(38, 750), font(28, 450)
     heights = []
@@ -415,6 +448,9 @@ def render_checklist(spec: dict, brand: Brand) -> Image.Image:
 def render_poster(spec: dict, brand: Brand) -> bytes:
     """PNG bytes of the poster described by `spec`."""
     template = spec.get("template") if spec.get("template") in TEMPLATES else "points"
+    if brand.style == "personal":
+        primary, accent = personal_theme(spec)
+        brand = replace(brand, primary=primary, accent=accent)
     img = {
         "points": render_points, "stat": render_stat, "statement": render_statement, "compare": render_compare, "checklist": render_checklist,
     }[template](spec, brand)

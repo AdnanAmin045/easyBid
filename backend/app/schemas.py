@@ -13,7 +13,7 @@ class AppSettings(BaseModel):
     # Control
     paused: bool = True  # kill switch: nothing is fetched or sent while true
     mode: Mode = "manual"
-    poll_interval_seconds: int = Field(60, ge=30, le=3600)
+    poll_interval_seconds: int = Field(300, ge=30, le=3600)
     max_projects_per_cycle: int = Field(15, ge=1, le=50)
     daily_bid_cap: int = Field(10, ge=0, le=500)
     semi_auto_min_score: int = Field(75, ge=0, le=100)
@@ -69,8 +69,9 @@ class AppSettings(BaseModel):
     selection_model: str = "claude-opus-5-5"
     proposal_model: str = "claude-opus-5-5"
     # Tried in order when the model above is out of quota or busy. Models without an API key are skipped.
-    selection_fallback_models: list[str] = ["gemini-flash-lite-latest"]
-    proposal_fallback_models: list[str] = ["gemini-flash-lite-latest"]
+    # Groq comes first so that Gemini's free quota stays free for the LinkedIn posts.
+    selection_fallback_models: list[str] = ["groq/openai/gpt-oss-120b", "gemini-flash-lite-latest"]
+    proposal_fallback_models: list[str] = ["groq/openai/gpt-oss-120b", "gemini-flash-lite-latest"]
     proposal_min_chars: int = Field(100, ge=1)
     proposal_max_chars: int = Field(1500, ge=100)
 
