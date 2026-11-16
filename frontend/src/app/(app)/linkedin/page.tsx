@@ -106,7 +106,7 @@ function Connections({ overview, reload }: { overview: LinkedInOverview; reload:
 
 function PosterEditor({ spec, onChange }: { spec: PosterSpec; onChange: (s: PosterSpec) => void }) {
   const set = (patch: Partial<PosterSpec>) => onChange({ ...spec, ...patch });
-  const hasPoints = spec.template === "points" || spec.template === "checklist" || spec.template === "compare";
+  const hasPoints = spec.template === "points" || spec.template === "checklist" || spec.template === "compare" || spec.template === "flow" || spec.template === "grid";
   return (
     <div className="space-y-3 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -115,6 +115,8 @@ function PosterEditor({ spec, onChange }: { spec: PosterSpec; onChange: (s: Post
             <option value="points">Headline and numbered points</option>
             <option value="checklist">Headline and ticked checklist</option>
             <option value="compare">Common way vs better way</option>
+            <option value="flow">Steps in order (flow)</option>
+            <option value="grid">Cards (2 to 4 ideas)</option>
             <option value="stat">One big number</option>
             <option value="statement">One statement</option>
           </Select>

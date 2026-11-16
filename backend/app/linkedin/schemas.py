@@ -196,7 +196,7 @@ class PosterPoint(BaseModel):
 
 
 class PosterSpec(BaseModel):
-    template: Literal["points", "stat", "statement", "compare", "checklist"] = "points"
+    template: Literal["points", "stat", "statement", "compare", "checklist", "flow", "grid"] = "points"
     kicker: str = Field("", max_length=26)
     headline: str = Field("", max_length=110)
     points: list[PosterPoint] = Field(default_factory=list, max_length=5)
@@ -204,6 +204,7 @@ class PosterSpec(BaseModel):
     stat_label: str = Field("", max_length=110)
     caption: str = Field("", max_length=200)
     footer: str = Field("", max_length=40)
+    aside: str = Field("", max_length=40)  # a handwritten note in the author's voice
 
 
 class PostOut(BaseModel):

@@ -27,16 +27,37 @@ DEFAULT_PILLARS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
+# Topic lanes: the subject area of the day, rotated so the feed spreads over everything the audience cares about instead of
+# repeating one hot subject. AI appears once in the cycle. The personal profile and the company page are always four lanes
+# apart, so they never post about the same area on the same day.
+LANES: list[tuple[str, str]] = [
+    ("Frontend and web experience", "Next.js, React, CSS, accessibility, Core Web Vitals, UX details that change conversion"),
+    ("Backend and APIs", "FastAPI, Node.js, PostgreSQL, API design, queues, caching, reliability of services"),
+    ("Cloud, DevOps and security", "deployment, CI/CD, cost of cloud, monitoring, security incidents and basic hygiene"),
+    ("Product and startups", "scoping an MVP, build vs buy, the real cost of software, hiring or choosing a dev team, launch mistakes"),
+    ("AI in real products", "LLMs, agents and automation as used in shipped products: what works, what breaks, cost and evaluation"),
+    ("Freelancing and client work", "estimating, scoping, communication, contracts, working with non-technical clients, staying sane in projects"),
+    ("Developer productivity and tools", "editors, testing, code review, Git workflows, debugging habits, tools worth adopting"),
+    ("Data and business automation", "databases and analytics, dashboards, integrations, automating manual business processes"),
+]
+
+LANE_RULE = """- Today's <lane> is the subject area. Every idea must come from it. If the lane is not 'AI in real products', AI, LLMs and agents must NOT be the subject of the post (a one-line mention is fine).
+- The audience is broad: founders, product owners, non-technical buyers and developers. Write so a smart non-developer can follow, and a developer still learns something."""
+
 DEFAULT_WRITER_STYLE = """- Line one is the hook: a specific claim, number or tension, under 100 characters. Not a question like 'Did you know', not 'Here's why', not a greeting. Then a blank line.
 - Short paragraphs of one or two lines with a blank line between them. Plain words. Mix short and long sentences.
 - One idea only. Be concrete: name the tool, the version, the situation.
 - 700 to 1500 characters, hashtags not counted.
+- Sound like one real person typing, not a template: contractions, a stated opinion ('I think', 'my read'), one slightly unpolished sentence, uneven paragraph lengths. Do not wrap up neatly.
+- Avoid the patterns that give AI away: 'It's not X, it's Y', three-item lists of adjectives, a tidy moral at the end, announcing 'Here's why', starting several lines the same way, rhetorical question openers.
+- Name the news first (what shipped or happened and where you saw it), then your view. A reader should finish knowing something new this week.
 - Close with one real question people can answer in a sentence, or one clear next step. Not 'Thoughts?' and not 'Agree?'. Where it fits naturally, invite people who have this problem to message you.
 - No markdown, no asterisks, no headings, no em dashes. A list is fine as lines starting with '1.' or '-', at most 5.
 - At most one emoji, usually none. No hashtags inside the text.
 - Never use these: game-changer, unlock, delve, leverage, seamless, cutting-edge, landscape, revolutionize, 'in today's fast-paced world', 'let's dive in', 'I'm thrilled'."""
 
-DEFAULT_PLANNER_GUIDANCE = """- Be tied to something real: an item in <research>, or a real fact in <about> or <website>. No topic that needs invented facts.
+DEFAULT_PLANNER_GUIDANCE = """- Be NEW or TRENDING: built on a specific item in <research> (a release, launch, change, incident, or something developers are talking about this week) in today's <lane>. Evergreen advice is allowed only when <research> has nothing in this lane, and then say so.
+- Be tied to something real: an item in <research>, or a real fact in <about> or <website>. No topic that needs invented facts.
 - Fit today's <pillar> and be something this writer can speak about with authority given <about> and <website>.
 - Be about the fields in <fields_we_follow>, and useful to the <audience>: a reader should learn something they can check or decide.
 - Differ from every entry in <recent_posts_do_not_repeat_topics_angles_or_openings> in topic AND angle, and from <other_account_posts_today_so_choose_a_different_topic>.
@@ -50,8 +71,13 @@ DEFAULT_POSTER_GUIDANCE = """- Decide whether the post is stronger with a poster
   compare: a headline and 2 to 4 rows; in each, title is the common or wrong way and text is the better way (both under 90 characters).
   stat: one real number from <research> or <about>, and what it means.
   statement: one strong sentence under 100 characters.
+  flow: a headline and 3 to 5 steps that happen in order (a process, a timeline, a pipeline), each a title under 40 characters and one short line.
+  grid: a headline and 2 to 4 short parallel ideas shown as cards (options, pillars, categories), each a title under 30 characters and one short line.
+- Vary the layout from the recent posters listed in <recent_poster_layouts>; do not use the same layout as the latest one.
 - A question post or a personal story has no poster: set needed to false.
-- The kicker is a topic label of one to three words."""
+- The kicker is a topic label of one to three words.
+- source: when the poster is about a news item from <research>, the source name exactly as it appears on that line (for example 'Hacker News' or 'GitHub trending'); otherwise empty.
+- aside: a handwritten note from the author in their own voice, under 38 characters, an opinion not a fact (for example 'my take: worth testing'). Leave empty when it would sound forced."""
 
 # Always added, never editable. checks.py enforces the same rules in code.
 LOCKED_RULES = """- State as fact only what is in <research>, <about>, <website> or <owner_idea>. Anything else is your reading of it, and you say so ('my read', 'I suspect').

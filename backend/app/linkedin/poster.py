@@ -11,6 +11,8 @@ Five layouts, each with two looks, all 1080x1350 (4:5), the portrait size that t
   compare    the common way against the better way (crossed out, or on a note)
   stat       one big number with what it means (circled, or on a note)
   statement  one strong sentence (on the page, or on a taped sheet)
+  flow       3-5 steps in order, joined by a hand-drawn path (a winding path, or a ladder of boxes with arrows)
+  grid       2-4 parallel ideas as cards (a 2-column grid of notes, or ruled columns with big hand-drawn numerals)
 
 Drawn at twice the size and scaled down, which keeps the edges of shapes smooth.
 """
@@ -30,7 +32,7 @@ FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 FONT_FILE = FONT_DIR / "Inter.ttf"
 W, H = 1080, 1350
 SCALE = 2
-TEMPLATES = ("points", "stat", "statement", "compare", "checklist")
+TEMPLATES = ("points", "stat", "statement", "compare", "checklist", "flow", "grid")
 
 HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
@@ -401,6 +403,19 @@ def header(img: Image.Image, draw: ImageDraw.ImageDraw, brand: Brand, kicker: st
         img.paste(layer, (round((W - 72) * SCALE - layer.width + pad * SCALE * 0.6), round((y + 4) * SCALE)), layer)
 
 
+def aside_note(img: Image.Image, text: str, accent, rng) -> None:
+    """A short note in the author's own handwriting at the bottom left, slightly tilted, like something jotted on the print."""
+    f = font(46, 700, "hand")
+    probe = ImageDraw.Draw(img)
+    tw = probe.textlength(text, font=f) / SCALE
+    pad = 14
+    layer = Image.new("RGBA", (round((tw + pad * 2) * SCALE), round(80 * SCALE)), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer, "RGBA")
+    ld.text((pad * SCALE, 40 * SCALE), text, font=f, fill=(*accent, 255), anchor="lm")
+    layer = layer.rotate(rng.uniform(1.5, 3.5), resample=Image.BICUBIC, expand=True)
+    img.paste(layer, (round(60 * SCALE), round((H - 150) * SCALE)), layer)
+
+
 def footer(draw: ImageDraw.ImageDraw, brand: Brand, text, muted, accent, note: str = "") -> None:
     y = H - 84
     # A personal poster carries no website and no company: only the person, already shown at the top, so the line stays quiet.
@@ -425,6 +440,44 @@ class Page:
     look: Look
     rng: random.Random
     brand: Brand
+    blank: Image.Image | None = None  # the page before any content, to find where the content is
+
+
+def decorate(p: "Page") -> None:
+    """A large soft circle and a thin ring in the bottom-right corner, drawn behind the content (only on empty paper, so cards
+    and their shadows are never touched): depth without clutter. Solid colours mixed from the paper, so it is never muddy."""
+    dark = luminance(p.base) < 0.4
+    layer = p.blank.copy()
+    d = ImageDraw.Draw(layer)
+    cx, cy, r = (W - 70) * SCALE, (H - 40) * SCALE, 330 * SCALE
+    r2 = 235 * SCALE
+    if dark:  # a filled disc turns muddy on dark paper, so two thin rings instead
+        ring = mix(p.base, p.accent, 0.35)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=ring, width=3 * SCALE)
+        d.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], outline=ring, width=3 * SCALE)
+    else:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=mix(p.base, p.accent, 0.11))
+        d.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], outline=mix(p.base, p.accent, 0.30), width=3 * SCALE)
+    empty = ImageChops.difference(p.img, p.blank).convert("L").point(lambda v: 255 if v <= 3 else 0)
+    p.img.paste(layer, (0, 0), empty)
+
+
+def balance(p: "Page") -> None:
+    """Centre the content block (headline and body) between the header and the footer, so the poster is not top-heavy."""
+    top_edge, bottom_edge = 190 * SCALE, (H - 120) * SCALE
+    diff = ImageChops.difference(p.img, p.blank).convert("L").point(lambda v: 255 if v > 3 else 0)
+    diff.paste(0, (0, 0, diff.width, top_edge))
+    box = diff.getbbox()
+    if not box:
+        return
+    top, bottom = box[1], box[3]
+    shift = max(0, min(round(((top_edge + bottom_edge) - (top + bottom)) / 2), 230 * SCALE))
+    if shift < 8 * SCALE:
+        return
+    region = (0, max(top_edge, top - 4), p.img.width, min(p.img.height, bottom + 4))
+    content = p.img.crop(region)
+    p.img.paste(p.blank.crop(region), region[:2])
+    p.img.paste(content, (region[0], region[1] + shift), diff.crop(region))
 
 
 def start(spec: dict, brand: Brand) -> Page:
@@ -432,12 +485,17 @@ def start(spec: dict, brand: Brand) -> Page:
     draw = ImageDraw.Draw(img, "RGBA")
     look = look_of(spec)
     rng = random.Random(look.seed)
+    base = rgb(brand.primary, "#0B1220")
     header(img, draw, brand, spec.get("kicker", ""), text, muted, accent, rng)
-    return Page(img, draw, text, muted, accent, rgb(brand.primary, "#0B1220"), look, rng, brand)
+    return Page(img, draw, text, muted, accent, base, look, rng, brand, blank=img.copy())
 
 
 def finish(p: Page, spec: dict) -> Image.Image:
+    balance(p)
+    decorate(p)
     footer(p.draw, p.brand, p.text, p.muted, p.accent, spec.get("footer", ""))
+    if spec.get("aside") and p.brand.style == "personal":
+        aside_note(p.img, spec["aside"], p.accent, p.rng)
     return p.img
 
 
@@ -464,10 +522,10 @@ def render_points(spec: dict, brand: Brand) -> Image.Image:
     tface, tweight = (look.face, 620 if look.face == "serif" else 750)
 
     if notes:
-        params = ((30, 3, 29, 34), (24, 3, 27, 32), (20, 2, 26, 31), (16, 2, 25, 30), (14, 2, 24, 29))
+        params = ((34, 3, 32, 38), (30, 3, 29, 34), (24, 3, 27, 32), (20, 2, 26, 31), (16, 2, 25, 30), (14, 2, 24, 29))
         text_w = width - 70 - 76
     else:
-        params = ((34, 3, 31, 36), (28, 3, 30, 35), (22, 3, 28, 34), (18, 2, 28, 33), (14, 2, 26, 32))
+        params = ((38, 3, 33, 40), (34, 3, 31, 36), (28, 3, 30, 35), (22, 3, 28, 34), (18, 2, 28, 33), (14, 2, 26, 32))
         text_w = width - 112
     gap = 24 if notes else 0
     for pad_y, body_lines, body_size, title_size in params:
@@ -481,7 +539,7 @@ def render_points(spec: dict, brand: Brand) -> Image.Image:
         rows_h = sum(b[2] for b in built) + gap * (len(built) - 1)
         if bottom - rows_h - 40 - top_limit >= 170:
             break
-    y = head(p, spec.get("headline", ""), top_limit, max(150, bottom - rows_h - 40 - top_limit)) + 34
+    y = head(p, spec.get("headline", ""), top_limit, max(150, bottom - rows_h - 40 - top_limit)) + 56
     free = bottom - y - rows_h
     spread = min(40 if notes else 30, max(0, free / max(1, len(built)))) if free > 0 else 0
 
@@ -682,6 +740,107 @@ def render_compare(spec: dict, brand: Brand) -> Image.Image:
     return finish(p, spec)
 
 
+def render_flow(spec: dict, brand: Brand) -> Image.Image:
+    """Steps in order joined by a hand-drawn path. Variant 0: a winding path with numbered circles, text alternating
+    sides. Variant 1: boxed steps stacked in a ladder with a drawn arrow between each."""
+    p = start(spec, brand)
+    draw, look = p.draw, p.look
+    steps = rows_of(spec, 5)
+    left, width = 72, W - 144
+    bottom, top_limit = H - 150, 200
+    tface, tweight = look.face, (620 if look.face == "serif" else 750)
+    n = len(steps)
+    y0 = head(p, spec.get("headline", ""), top_limit, 300, range(72, 47, -2), 3) + 40
+    avail = bottom - y0
+    step_h = min(235, avail / n)
+    tsize = 38 if step_h > 140 else 30
+    bsize = 29 if step_h > 140 else 24
+    tf, bf = font(tsize, tweight, tface), font(bsize, 450)
+    if look.variant == 0:
+        cx = left + 46
+        x_text = left + 120
+        text_w = width - 130
+        centers = [y0 + step_h * i + step_h * 0.34 for i in range(n)]
+        for i in range(n - 1):  # the path, wobbling a little between circles
+            stroke(draw, [(cx + (6 if i % 2 else -6), centers[i] + 46), (cx + (-6 if i % 2 else 6), (centers[i] + centers[i + 1]) / 2), (cx, centers[i + 1] - 46)], p.accent, 4, p.rng, wobble=1.6)
+        for i, s_ in enumerate(steps):
+            cy = centers[i]
+            draw.ellipse([(cx - 40) * SCALE, (cy - 40) * SCALE, (cx + 40) * SCALE, (cy + 40) * SCALE], fill=p.accent)
+            draw.text((cx * SCALE, (cy + 2) * SCALE), str(i + 1), font=font(46, 700, "hand"), fill=on_color(p.accent), anchor="mm")
+            t_lines = wrap(draw, s_["title"], tf, text_w)[:2]
+            ty = draw_lines(draw, x_text, cy - 30, t_lines, tf, p.text, tsize, 1.2)
+            if s_.get("text"):
+                draw_lines(draw, x_text, ty + 6, wrap(draw, s_["text"], bf, text_w)[:2], bf, p.muted, bsize, 1.35)
+    else:
+        box_h = step_h - 34
+        for i, s_ in enumerate(steps):
+            top = y0 + i * step_h
+            fill = PASTELS[(i + look.seed) % len(PASTELS)]
+            shift = 40 if i % 2 else 0
+
+            def content(d, ox, oy, s_=s_, i=i):
+                d.text(((ox + 34) * SCALE, (oy + box_h / 2) * SCALE), str(i + 1), font=font(70, 700, "hand"), fill=INK, anchor="lm")
+                lines = wrap(d, s_["title"], tf, width - 260)[:2]
+                body = wrap(d, s_["text"], bf, width - 260)[:2] if s_.get("text") else []
+                block = len(lines) * tsize * 1.15 + (len(body) * bsize * 1.3 + 8 if body else 0)
+                ty = draw_lines(d, ox + 100, oy + (box_h - block) / 2, lines, tf, INK, tsize, 1.15)
+                if body:
+                    draw_lines(d, ox + 100, ty + 8, body, bf, INK_SOFT, bsize, 1.3)
+
+            paper(p.img, (width - 100, box_h), (left + shift + (width - 100) / 2, top + box_h / 2), (-0.8, 0.9)[i % 2], fill, content, tape=False)
+            if i < n - 1:
+                ax = left + width / 2 + (shift if i % 2 == 0 else 0)
+                stroke(draw, [(ax, top + box_h + 4), (ax + 3, top + step_h - 2)], p.accent, 4, p.rng, wobble=0.6)
+                stroke(draw, [(ax - 11, top + step_h - 16), (ax + 3, top + step_h - 2), (ax + 14, top + step_h - 16)], p.accent, 4, p.rng, wobble=0.4)
+    return finish(p, spec)
+
+
+def render_grid(spec: dict, brand: Brand) -> Image.Image:
+    """Parallel ideas as cards. Variant 0: tilted notes in a 2-column grid. Variant 1: ruled columns with large numerals."""
+    p = start(spec, brand)
+    draw, look = p.draw, p.look
+    cards = rows_of(spec, 4)
+    left, width = 72, W - 144
+    bottom, top_limit = H - 150, 200
+    tface, tweight = look.face, (620 if look.face == "serif" else 750)
+    y0 = head(p, spec.get("headline", ""), top_limit, 300, range(72, 47, -2), 3) + 44
+    cols = 2 if len(cards) > 2 or look.variant == 0 else 1
+    rows_n = math.ceil(len(cards) / cols)
+    gap = 34
+    cw = (width - gap * (cols - 1)) / cols
+    ch = min(430, (bottom - y0 - gap * (rows_n - 1)) / rows_n)
+    tsize, bsize = (40, 30) if ch > 250 else (32, 25)
+    tf, bf = font(tsize, tweight, tface), font(bsize, 450)
+    for i, c_ in enumerate(cards):
+        col, row = i % cols, i // cols
+        x, y = left + col * (cw + gap), y0 + row * (ch + gap)
+        t_lines = wrap(draw, c_["title"], tf, cw - 70)[:3]
+        b_lines = wrap(draw, c_.get("text", ""), bf, cw - 70)[:4] if c_.get("text") else []
+        if look.variant == 0:
+            def content(d, ox, oy, t_lines=t_lines, b_lines=b_lines):
+                ty = draw_lines(d, ox + 34, oy + 34, t_lines, tf, INK, tsize, 1.15)
+                if b_lines:
+                    draw_lines(d, ox + 34, ty + 10, b_lines, bf, INK_SOFT, bsize, 1.35)
+
+            paper(p.img, (cw - 12, ch - 12), (x + cw / 2, y + ch / 2), (-1.4, 1.1, 0.9, -1.0)[i % 4], PASTELS[(i + look.seed) % len(PASTELS)], content, tape=True, tape_x=0.25 + 0.5 * ((i * 3 % 5) / 5))
+        else:
+            draw.line([x * SCALE, y * SCALE, (x + cw) * SCALE, y * SCALE], fill=p.text, width=3 * SCALE)
+            draw.text((x * SCALE, (y + 10) * SCALE), str(i + 1), font=font(96, 700, "hand"), fill=p.accent, anchor="la")
+            ty = draw_lines(draw, x, y + 108, t_lines, tf, p.text, tsize, 1.15)
+            if b_lines:
+                draw_lines(draw, x, ty + 8, b_lines, bf, p.muted, bsize, 1.35)
+    return finish(p, spec)
+
+
+def print_wear(img: Image.Image) -> Image.Image:
+    """What a flat digital fill never has: paper that is a touch uneven in tone, and corners that fall off a little, like a photographed print."""
+    blotch = Image.effect_noise((9, 11), 3).resize((W, H), Image.BICUBIC).convert("RGB")
+    img = ImageChops.add(img, blotch, 1.0, -128)  # +-a few levels of slow, soft variation
+    edge = Image.radial_gradient("L").resize((W, H), Image.BICUBIC)  # 0 in the centre, 255 at the corners
+    shade = edge.point(lambda v: round(v * 0.05))
+    return ImageChops.subtract(img, Image.merge("RGB", (shade, shade, shade)))
+
+
 def render_poster(spec: dict, brand: Brand) -> bytes:
     """PNG bytes of the poster described by `spec`."""
     template = spec.get("template") if spec.get("template") in TEMPLATES else "points"
@@ -690,8 +849,10 @@ def render_poster(spec: dict, brand: Brand) -> bytes:
         brand = replace(brand, primary=primary, accent=accent)
     img = {
         "points": render_points, "stat": render_stat, "statement": render_statement, "compare": render_compare, "checklist": render_checklist,
+        "flow": render_flow, "grid": render_grid,
     }[template](spec, brand)
     img = img.resize((W, H), Image.LANCZOS)
+    img = print_wear(img)
     grain = Image.effect_noise((W, H), 9).convert("RGB")  # paper grain, drawn before the logo so the logo stays exactly as uploaded
     img = ImageChops.add(img, grain, 1.0, -128)
     paste_logo(img, brand)

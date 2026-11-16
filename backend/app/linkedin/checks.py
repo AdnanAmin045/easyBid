@@ -17,7 +17,11 @@ BANNED = (
     "landscape", "tapestry", "testament to", "leverage", "synergy", "supercharge", "elevate your", "take your business to the next level",
     "here's the thing", "let that sink in", "read that again", "agree?", "thoughts?", "hot take", "no longer just", "not just about",
     "more than just", "maintenance nightmare", "100% accuracy", "100% data accuracy", "guarantee",
+    "furthermore", "moreover", "in conclusion", "it's worth noting", "it is worth noting", "plays a crucial", "pivotal", "robust", "here's why",
+    "key takeaway", "whether you're", "in the world of", "ever-changing", "unleash", "empower", "harness", "ultimately,", "embark",
 )
+# "It's not X, it's Y": the most recognisable machine-written sentence shape.
+NOT_X_BUT_Y = re.compile(r"\b(?:it's|it is|this is|that's|this isn't|it isn't)\s+not\s+(?:just\s+|only\s+)?[^.,;\n]{1,50}[,.;]\s*(?:it's|it is|this is|that's|but)\b", re.I)
 # Things that happened to the writer. Only allowed when the owner's own facts say so.
 INVENTED_EXPERIENCE = (
     "a client of mine", "one of my clients", "one of our clients", "my client ", "our client ", "a client told me", "a client asked me",
@@ -58,6 +62,8 @@ def post_problem(text: str, allowed_mentions: list[str]) -> str | None:
     for phrase in BANNED:
         if phrase in lowered:
             return f"it uses the cliche '{phrase}'; say the same thing in plain words"
+    if NOT_X_BUT_Y.search(text):
+        return "it uses the shape 'it's not X, it's Y', which reads as machine-written; state the point directly"
     if len(EMOJI.findall(text)) > 2:
         return "it has more than two emojis; use none or one"
     found = PLACEHOLDER.search(text)
@@ -109,7 +115,7 @@ def fact_problem(text: str, facts_text: str) -> str | None:
 
 def poster_problem(raw: dict, facts_text: str) -> str | None:
     """The poster is held to the same rules as the post: a number on it must come from the given data."""
-    parts = [str(raw.get("headline", "")), str(raw.get("stat", "")), str(raw.get("stat_label", "")), str(raw.get("caption", ""))]
+    parts = [str(raw.get("headline", "")), str(raw.get("stat", "")), str(raw.get("stat_label", "")), str(raw.get("caption", "")), str(raw.get("aside", ""))]
     for p in raw.get("points") or []:
         parts += [str(p.get("title", "")), str(p.get("text", ""))]
     found = fact_problem(" ".join(parts), facts_text)
@@ -118,7 +124,7 @@ def poster_problem(raw: dict, facts_text: str) -> str | None:
 
 def branding_problem(raw: dict, banned_words: list[str]) -> str | None:
     """A personal poster carries no company name, no website and no link: it is there to inform, not to advertise."""
-    parts = [str(raw.get("kicker", "")), str(raw.get("headline", "")), str(raw.get("stat_label", "")), str(raw.get("caption", ""))]
+    parts = [str(raw.get("kicker", "")), str(raw.get("headline", "")), str(raw.get("stat_label", "")), str(raw.get("caption", "")), str(raw.get("aside", ""))]
     for p in raw.get("points") or []:
         parts += [str(p.get("title", "")), str(p.get("text", ""))]
     joined = " ".join(parts)
@@ -131,7 +137,7 @@ def branding_problem(raw: dict, banned_words: list[str]) -> str | None:
     return None
 
 
-def poster_from(raw: dict, mode: str, post: str, brand: Brand) -> dict | None:
+def poster_from(raw: dict, mode: str, post: str, brand: Brand, facts: str = "") -> dict | None:
     """The poster spec the writer asked for, cleaned up; None when there should be no poster."""
     if mode == "never":
         return None
@@ -153,8 +159,12 @@ def poster_from(raw: dict, mode: str, post: str, brand: Brand) -> dict | None:
         "stat_label": " ".join(str(raw.get("stat_label", "")).split())[:110],
         "caption": " ".join(str(raw.get("caption", "")).split())[:200],
         "footer": "",
+        "aside": " ".join(str(raw.get("aside", "")).split())[:40],
     }
-    if template in ("points", "compare", "checklist") and (len(points) < 2 or not spec["headline"]):
+    source = " ".join(str(raw.get("source", "")).split())[:30]
+    if source and source.lower() in facts.lower():  # only a source that is really in the research
+        spec["footer"] = f"Source: {source}"
+    if template in ("points", "compare", "checklist", "flow", "grid") and (len(points) < 2 or not spec["headline"]):
         template = spec["template"] = "statement"
     if template == "stat" and not (spec["stat"] and spec["stat_label"]):
         template = spec["template"] = "statement"

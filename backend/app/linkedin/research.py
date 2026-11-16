@@ -27,7 +27,7 @@ from app.services.llm import LLM, LLMError
 logger = logging.getLogger("easybid")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; codevryn-content-bot)"}
-MAX_FIELDS = 4  # fields looked up in the feeds each day, to stay polite and fast
+MAX_FIELDS = 5  # fields looked up in the feeds each day, to stay polite and fast
 
 
 @dataclass
@@ -97,11 +97,27 @@ async def devto(http: httpx.AsyncClient) -> list[dict]:
     ][:6]
 
 
+async def github_trending(http: httpx.AsyncClient) -> list[dict]:
+    """Repositories created in the last week that gathered the most stars: what developers are actually excited about."""
+    since = (utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+    res = await _get(http, f"https://api.github.com/search/repositories?q=created:>{since}&sort=stars&order=desc&per_page=8")
+    if res is None:
+        return []
+    return [
+        {
+            "title": f"{h['full_name']}: {(h.get('description') or '').strip()[:110]} ({h.get('stargazers_count', 0)} stars in under a week)",
+            "url": h.get("html_url", ""), "source": "GitHub trending", "topic": "",
+        }
+        for h in res.json().get("items", [])
+        if h.get("full_name") and h.get("description")
+    ][:6]
+
+
 async def fetch_feeds(fields: list[str]) -> list[dict]:
     """Headlines from the last week about each field, from the free feeds."""
     topics = [f for f in fields if f.strip()][:MAX_FIELDS]
     async with httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True) as http:
-        batches = await asyncio.gather(*[google_news(http, t) for t in topics], *[hacker_news(http, t) for t in topics], devto(http))
+        batches = await asyncio.gather(*[google_news(http, t) for t in topics], *[hacker_news(http, t) for t in topics], devto(http), github_trending(http))
     seen: set[str] = set()
     out = []
     for batch in batches:
@@ -121,7 +137,7 @@ def search_prompt(fields: list[str], day: date) -> tuple[str, str]:
     user = (
         f"Today is {day.isoformat()}. Search the web for what happened in the last 7 days (older only if it is still the main story) in these fields:\n"
         + "\n".join(f"- {f}" for f in fields)
-        + "\n\nGive 8 to 10 items that a founder or engineering lead would care about: releases, price or policy changes, "
+        + "\n\nGive 8 to 10 items that a founder or engineering lead would care about. Favour what is NEW and TRENDING right now: new releases and versions, launches, tools or repositories developers are suddenly talking about, price or policy changes, "
         "security incidents, notable launches, widely shared engineering write-ups, shifts in how teams build. Prefer facts that can change a "
         "decision over opinions.\n\nOne item per line in exactly this form:\n"
         "HEADLINE | what happened and why it matters, in one or two sentences with the specific facts you found | source name\n\n"
@@ -147,12 +163,22 @@ def digest_of(found: list[str], feeds: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def fields_for(s: LinkedInSettings, day: date) -> list[str]:
+    """Today's lanes (the personal and the company one) first, then the configured fields, so the lookup covers what
+    today's posts are about and the first field does not win every day."""
+    from app.linkedin import content  # local import: content imports this module
+
+    lanes = [f"{n}: {d}" for n, d in dict.fromkeys(content.lane_for(t, day) for t in ("personal", "company"))]
+    return lanes + [f for f in s.fields if f.strip()]
+
+
 async def gather(llm: LLM, s: LinkedInSettings, day: date) -> Research:
-    feeds_task = asyncio.create_task(fetch_feeds(s.fields))
+    fields = fields_for(s, day)
+    feeds_task = asyncio.create_task(fetch_feeds([f.split(":")[0] for f in fields]))
     found: list[str] = []
     sources: list[dict] = []
     try:
-        system, user = search_prompt(s.fields, day)
+        system, user = search_prompt(fields[:6], day)
         text, pages = await llm.search(model=s.model, system=system, user=user)
         found = parse_search(text) or [ln for ln in text.splitlines() if ln.strip()][:12]
         sources = [p for p in pages if p.get("url")][:12]

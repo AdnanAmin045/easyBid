@@ -745,7 +745,7 @@ export interface PosterPoint {
 }
 
 export interface PosterSpec {
-  template: "points" | "stat" | "statement" | "compare" | "checklist";
+  template: "points" | "stat" | "statement" | "compare" | "checklist" | "flow" | "grid";
   kicker: string;
   headline: string;
   points: PosterPoint[];
