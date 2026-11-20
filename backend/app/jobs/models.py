@@ -37,6 +37,9 @@ class GmailAccount(Base):
     smtp_password: Mapped[str] = mapped_column(Text, default="")
     imap_host: Mapped[str] = mapped_column(String(255), default="")
     imap_port: Mapped[int] = mapped_column(Integer, default=993)
+    # Blank means IMAP uses the SMTP login. Set when SMTP is a relay (e.g. Brevo) and replies are read from the real mailbox.
+    imap_user: Mapped[str] = mapped_column(String(320), default="")
+    imap_password: Mapped[str] = mapped_column(Text, default="")
     scopes: Mapped[str] = mapped_column(Text, default="")
     # Shown as the sender and signed under the emails; blank means the names in the Jobs settings.
     sender_name: Mapped[str] = mapped_column(String(120), default="")
