@@ -246,6 +246,8 @@ function SmtpForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
     smtp_password: "",
     imap_host: "",
     imap_port: 993,
+    imap_user: "",
+    imap_password: "",
     sender_name: "",
     signature: "",
   };
@@ -254,8 +256,12 @@ function SmtpForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
   const [error, setError] = useState("");
   const set = (patch: Partial<typeof blank>) => setF((current) => ({ ...current, ...patch }));
 
-  function preset(provider: "hostinger" | "other") {
-    set(provider === "hostinger" ? { smtp_host: "smtp.hostinger.com", smtp_port: 465, smtp_secure: true, imap_host: "imap.hostinger.com", imap_port: 993 } : {});
+  function preset(provider: "hostinger" | "brevo") {
+    set(
+      provider === "hostinger"
+        ? { smtp_host: "smtp.hostinger.com", smtp_port: 465, smtp_secure: true, imap_host: "imap.hostinger.com", imap_port: 993 }
+        : { smtp_host: "smtp-relay.brevo.com", smtp_port: 2525, smtp_secure: false, imap_host: "imap.titan.email", imap_port: 993 },
+    );
   }
 
   async function save() {
@@ -274,9 +280,14 @@ function SmtpForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
     <div className="mb-3 rounded-[10px] border border-stone-200 bg-stone-50 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-stone-900">Add a mailbox over SMTP</h3>
-        <Button className="text-xs" onClick={() => preset("hostinger")}>
-          Fill in Hostinger
-        </Button>
+        <div className="flex gap-2">
+          <Button className="text-xs" onClick={() => preset("hostinger")}>
+            Fill in Hostinger
+          </Button>
+          <Button className="text-xs" onClick={() => preset("brevo")}>
+            Fill in Brevo + Titan
+          </Button>
+        </div>
       </div>
       <Notice>{error}</Notice>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -306,8 +317,14 @@ function SmtpForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
         <Field label="IMAP port" hint="Usually 993">
           <Input type="number" value={String(f.imap_port)} onChange={(e) => set({ imap_port: Number(e.target.value) })} />
         </Field>
-        <Field label="Login name" hint="Leave empty to use the email address.">
+        <Field label="Login name" hint="Leave empty to use the email address. For Brevo, the SMTP login from its SMTP & API page.">
           <Input value={f.smtp_user} onChange={(e) => set({ smtp_user: e.target.value })} />
+        </Field>
+        <Field label="IMAP login name" hint="Only if IMAP uses a different login than SMTP, e.g. the Titan mailbox address with Brevo. Otherwise empty.">
+          <Input value={f.imap_user} onChange={(e) => set({ imap_user: e.target.value })} />
+        </Field>
+        <Field label="IMAP password" hint="Only with a separate IMAP login, e.g. the Titan mailbox password. Otherwise empty.">
+          <Input type="password" autoComplete="new-password" value={f.imap_password} onChange={(e) => set({ imap_password: e.target.value })} />
         </Field>
         <Field label="Sender name" hint="Optional. Empty uses the name in Jobs applications below.">
           <Input value={f.sender_name} maxLength={120} onChange={(e) => set({ sender_name: e.target.value })} />
