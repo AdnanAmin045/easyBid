@@ -249,6 +249,8 @@ async def smtp_connect(body: schemas.SmtpAccountIn, session: AsyncSession = Depe
         password=body.smtp_password,
         imap_host=body.imap_host,
         imap_port=body.imap_port,
+        imap_user=body.imap_user.strip().lower(),
+        imap_password=body.imap_password,
     )
     try:
         await asyncio.to_thread(SmtpMailbox(js.smtp, settings).check)
@@ -267,6 +269,8 @@ async def smtp_connect(body: schemas.SmtpAccountIn, session: AsyncSession = Depe
     account.smtp_host, account.smtp_port, account.smtp_secure = body.smtp_host, body.smtp_port, body.smtp_secure
     account.smtp_user, account.smtp_password = user, secret
     account.imap_host, account.imap_port = body.imap_host, body.imap_port
+    account.imap_user = settings.imap_user
+    account.imap_password = gmail_lib.encrypt(body.imap_password, get_env().secret_key) if body.imap_password else ""
     account.sender_name = body.sender_name.strip() or account.sender_name
     account.signature = body.signature.strip() or account.signature
     account.connected_at = utcnow()

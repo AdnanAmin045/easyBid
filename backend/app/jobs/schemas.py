@@ -202,6 +202,9 @@ class SmtpAccountIn(BaseModel):
     smtp_password: str = Field(min_length=1, max_length=500)
     imap_host: str = Field(min_length=3, max_length=255)
     imap_port: int = Field(993, ge=1, le=65535)
+    # Only when IMAP has a different login than SMTP (SMTP through a relay such as Brevo, replies read from the mailbox).
+    imap_user: str = Field("", max_length=320)
+    imap_password: str = Field("", max_length=500)
     sender_name: str = Field("", max_length=120)
     signature: str = Field("", max_length=1000)
 

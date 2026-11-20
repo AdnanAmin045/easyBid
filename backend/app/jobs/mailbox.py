@@ -63,6 +63,8 @@ class SmtpSettings:
     password: str
     imap_host: str
     imap_port: int
+    imap_user: str = ""  # blank: the SMTP login
+    imap_password: str = ""
 
 
 def connect(host: str, port: int, timeout: float) -> socket.socket:
@@ -118,7 +120,7 @@ class SmtpDriver:
 
     def imap(self, s: SmtpSettings):
         conn = self.imap_ssl(s.imap_host, s.imap_port, timeout=TIMEOUT, ssl_context=ssl.create_default_context())
-        conn.login(s.user, s.password)
+        conn.login(s.imap_user or s.user, s.imap_password or s.password)
         return conn
 
 
@@ -272,6 +274,8 @@ def smtp_settings(account: GmailAccount) -> SmtpSettings:
         password=gmail_lib.decrypt(account.smtp_password, get_env().secret_key),
         imap_host=account.imap_host,
         imap_port=account.imap_port,
+        imap_user=account.imap_user,
+        imap_password=gmail_lib.decrypt(account.imap_password, get_env().secret_key) if account.imap_password else "",
     )
 
 
