@@ -40,6 +40,7 @@ class World:
         self.imap_ok = True
         self.send_error: Exception | None = None
         self.logins = []
+        self.imap_logins = []
         world = self
 
         class SMTP:
@@ -70,6 +71,7 @@ class World:
                 world.logins.append((host, port))
 
             def login(self, user, password):
+                world.imap_logins.append((user, password))
                 if not world.imap_ok:
                     raise imaplib.IMAP4.error("LOGIN failed")
 
@@ -287,3 +289,18 @@ async def test_an_unreachable_mail_server_pauses_the_campaign_without_failing_an
     js.smtp.smtp_ssl = world.SMTP
     await start(client, campaign["id"])
     assert await engine.tick(js, now=at(5000)) == 1 and len(world.sent) == 1
+
+
+async def test_imap_can_use_its_own_login_when_smtp_is_a_relay(outreach, google):
+    client, js = outreach
+    world = plug(js)
+    await add_mailbox(client, smtp_host="smtp-relay.brevo.com", smtp_user="relay-login", smtp_password="relay-key", imap_user=BOX, imap_password="titan-pass")
+    assert world.imap_logins[-1] == (BOX, "titan-pass")
+    assert (BOX, "titan-pass") not in world.logins  # SMTP still logs in with the relay login
+
+
+async def test_imap_uses_the_smtp_login_when_no_separate_one_is_given(outreach, google):
+    client, js = outreach
+    world = plug(js)
+    await add_mailbox(client)
+    assert world.imap_logins[-1] == (BOX, "mailbox-password")
